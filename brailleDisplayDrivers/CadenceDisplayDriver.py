@@ -6,6 +6,7 @@ import api
 from NVDAObjects import NVDAObject
 from screenBitmap import ScreenBitmap
 import math
+import threading
 
 def isSupportEnabled() -> bool:
 	return bdDetect.driverIsEnabledForAutoDetection(CadenceDisplayDriver.name)
@@ -33,6 +34,23 @@ def bitmapToCell(bitmap, cellNum, numCols, numRows):
 			cellOut += 2**pixI
 	return cellOut
 
+# https://stackoverflow.com/questions/12435211/threading-timer-repeat-function-every-n-seconds
+class RunInterval(threading.Thread):
+	stopFlag = threading.Event()
+	interval = 1
+	callback = None
+
+	def __init__(self, callback, interval = 1):
+		threading.Thread.__init__(self)
+		self.callback = callback
+		self.interval = interval
+	
+	def cancel(self):
+		self.stopFlag.set()
+
+	def run(self):
+		while not self.stopFlag.wait(self.interval):
+			self.callback()
 
 class CadenceDisplayDriver(HidBrailleDriver):
 	name = "CadenceDisplayDriver"
@@ -41,6 +59,7 @@ class CadenceDisplayDriver(HidBrailleDriver):
 
 	displayingImage = False
 	lastDisplayedNonImage = None
+	imageTimer = None
 
 	@classmethod
 	def registerAutomaticDetection(cls, driverRegistrar: bdDetect.DriverRegistrar):
@@ -61,8 +80,14 @@ class CadenceDisplayDriver(HidBrailleDriver):
 		self.displayingImage = not self.displayingImage
 		if self.displayingImage:
 			self.displayImage()
+			if self.imageTimer is None:
+				self.imageTimer = RunInterval(self.displayImage, 0.5)
+				self.imageTimer.start()
 		else:
 			self.restoreFromImage()
+			if self.imageTimer is not None:
+				self.imageTimer.cancel()
+				self.imageTimer = None
 	
 	def displayImage(self):
 		obj = api.getNavigatorObject()
@@ -88,5 +113,11 @@ class CadenceDisplayDriver(HidBrailleDriver):
 			self.lastDisplayedNonImage = cells
 		if isImage == self.displayingImage:
 			super().display(cells)
+
+	def terminate(self):
+		super.terminate()
+		if self.imageTimer is not None:
+			self.imageTimer.cancel()
+			self.imageTimer = None
 
 BrailleDisplayDriver = CadenceDisplayDriver
