@@ -9,9 +9,34 @@ import math
 import threading
 import ctypes
 import winGDI
+import hwIo.hid
+from enum import Enum
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
+
+class MiniKey(Enum):
+	DPadUp = 25
+	DPadDown = 26
+	DPadRight = 28
+	DPadLeft = 27
+	DPadCenter = 24
+	PanRight = 20
+	PanLeft = 18
+	Row1 = 32
+	Row2 = 33
+	Row3 = 34
+	Row4 = 35
+	Dot1 = 8
+	Dot2 = 9
+	Dot3 = 10
+	Dot4 = 11
+	Dot5 = 12
+	Dot6 = 13
+	Dot7 = 14
+	Dot8 = 15
+	Space = 16
+
 
 class ScreenBitmapResized(ScreenBitmap):
 	def __init__(self, width, height):
@@ -134,6 +159,9 @@ class CadenceDisplayDriver(HidBrailleDriver):
 	zoomY = 1
 	lastFitWidth = -1
 	lastFitHeight = -1
+	prevKeysDown = []
+	liveKeys = []
+	composedKeys = []
 
 	@classmethod
 	def registerAutomaticDetection(cls, driverRegistrar: bdDetect.DriverRegistrar):
@@ -175,7 +203,7 @@ class CadenceDisplayDriver(HidBrailleDriver):
 			log.error("no location for object when displaying image")
 			return
 		(left, top, width, height) = location
-		log.info(f"######## screenshot {left} {top} {width} {height}")
+#		log.info(f"######## screenshot {left} {top} {width} {height}")
 		if width <= 0 or height <= 0:
 			log.error("invalid object location")
 			return
@@ -189,7 +217,7 @@ class CadenceDisplayDriver(HidBrailleDriver):
 		bottomRightX = self.screenXToVirtual(self.getDisplayWidth(), self.getDisplayWidth()) * width
 		topLeftY = self.screenYToVirtual(self.getDisplayHeight(), self.getDisplayHeight()) * height
 
-		log.info(f"{topLeftX} {topLeftY} {bottomRightX} {bottomRightY}")
+#		log.info(f"{topLeftX} {topLeftY} {bottomRightX} {bottomRightY}")
 
 		bitmapHolder = ScreenBitmapResized(screenWidth, screenHeight)
 		bitmapBuffer = bitmapHolder.captureImage(left, top, width, height, round(topLeftX), round(topLeftY), round(bottomRightX - topLeftX), round(bottomRightY - topLeftY))
@@ -207,7 +235,7 @@ class CadenceDisplayDriver(HidBrailleDriver):
 			super().display(cells)
 
 	def terminate(self):
-		super.terminate()
+		super().terminate()
 		if self.imageTimer is not None:
 			self.imageTimer.cancel()
 			self.imageTimer = None
@@ -239,6 +267,112 @@ class CadenceDisplayDriver(HidBrailleDriver):
 		return ((graphX) - ((graphWidth) / 2)) / ((graphWidth) / 2) / self.zoomX + self.centerX
 	def screenYToVirtual(self, graphY, graphHeight):
 		return ((graphHeight - graphY) - ((graphHeight) / 2)) / ((graphHeight) / 2) / self.zoomY + self.centerY
+	
+	def _hidOnReceive(self, data: bytes):
+		# log.info("# data: " + " ".join([f"{b:0>8b}" for b in data]))
+		if len(data) == 5:
+			keysDown = []
+			for byteI, byte in enumerate(data):
+				for bitI in range(8):
+					if byte & (1 << bitI):
+						key = MiniKey(byteI * 8 + bitI)
+						if key == MiniKey.Dot4:
+							key = MiniKey.Dot1
+						elif key == MiniKey.Dot5:
+							key = MiniKey.Dot2
+						elif key == MiniKey.Dot6:
+							key = MiniKey.Dot3
+						elif key == MiniKey.Dot8:
+							key = MiniKey.Dot7
+						if not key in keysDown:
+							keysDown.append(key)
+			newKeys = [key for key in keysDown if key not in self.prevKeysDown]
+			keysUp = [key for key in self.prevKeysDown if not key in keysDown]
+			if len(newKeys) > 0:
+				self.composedKeys = []
+				for key in newKeys:
+					if not key in self.liveKeys:
+						self.liveKeys.append(key)
+			if len(keysUp) > 0:
+				self.liveKeys = [key for key in self.liveKeys if not key in keysUp]
 
+			end = len(self.composedKeys) != 0 and len(self.liveKeys) == 0
+
+			if len(keysUp) > 0:
+				for key in keysUp:
+					if not key in self.composedKeys:
+						self.composedKeys.append(key)
+			
+			self.handleKeys(self.liveKeys, self.composedKeys)
+
+			if end:
+				self.composedKeys = []
+			
+			self.prevKeysDown = keysDown
+		super()._hidOnReceive(data)
+	def _handleKeyRelease(self):
+		if not self.displayingImage:
+			super()._handleKeyRelease()
+	
+	def handleKeys(self, liveKeys, composedKeys):
+		#log.info(f"## {self.liveKeys} {self.composedKeys}")
+
+		if self.displayingImage:
+			if len(liveKeys) == 1:
+				# pan - arrow keys
+				if MiniKey.DPadUp in liveKeys:
+					log.info("up")
+				elif MiniKey.DPadDown in liveKeys:
+					log.info("down")
+				elif MiniKey.DPadLeft in liveKeys:
+					log.info("left")
+				elif MiniKey.DPadRight in liveKeys:
+					log.info("right")
+				# zoom in - pan right, zoom out - pan left
+				elif MiniKey.PanRight in liveKeys:
+					log.info("zoom in")
+				elif MiniKey.PanLeft in liveKeys:
+					log.info("zoom out")
+				# increase threshold - dot7, decrease threshold - dot3
+				elif MiniKey.Dot7 in liveKeys:
+					log.info("increase threshold")
+				elif MiniKey.Dot3 in liveKeys:
+					log.info("decrease threshold")
+				# reverse threshold - dot2
+				elif MiniKey.Dot2 in liveKeys:
+					log.info("reverse threshold")
+				# cycle color mode - dot1
+				elif MiniKey.Dot1 in liveKeys:
+					log.info("cycle color mode")
+			elif len(liveKeys) == 2:
+				if MiniKey.Row1 in liveKeys or MiniKey.Row2 in liveKeys:
+					increase = (MiniKey.Row1 in liveKeys)
+					# pan faster - row1 + arrow, pan slower - row2 + arrow
+					if MiniKey.DPadUp in liveKeys or MiniKey.DPadDown in liveKeys or MiniKey.DPadLeft in liveKeys or MiniKey.DPadRight in liveKeys:
+						log.info(f"{'increase' if increase else 'decrease'} pan")
+					# zoom faster - row1 + pan, zoom slower - row2 + pan
+					elif MiniKey.PanLeft in liveKeys or MiniKey.PanRight in liveKeys:
+						log.info(f"{'increase' if increase else 'decrease'} zoom")
+					# threshold faster - row1 + dot2, threshold slower row2 + dot2
+					elif MiniKey.Dot2 in liveKeys:
+						log.info(f"{'increase' if increase else 'decrease'} threshold")
+				# pan to edge - space + arrow or (up - space + dots123, down - space + dots 456, left - space + dots23, right - space + dots56)
+				if MiniKey.Space in liveKeys:
+					if MiniKey.DPadUp in liveKeys:
+						log.info("up")
+					elif MiniKey.DPadDown in liveKeys:
+						log.info("down")
+					elif MiniKey.DPadLeft in liveKeys:
+						log.info("left")
+					elif MiniKey.DPadRight in liveKeys:
+						log.info("right")
+			elif len(liveKeys) == 4:
+				# reset - dots1237
+				if MiniKey.Dot1 in liveKeys and MiniKey.Dot2 in liveKeys and MiniKey.Dot3 in liveKeys and MiniKey.Dot4 in liveKeys:
+					log.info("reset")
+	
+		if len(liveKeys) == 1:
+			if MiniKey.Row4 in liveKeys:
+				self.doToggleImage()
 
 BrailleDisplayDriver = CadenceDisplayDriver
