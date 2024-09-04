@@ -651,6 +651,23 @@ class CadenceDisplayDriver(HidBrailleDriver):
 		else:
 			self.bwThreshold.decreaseRate()
 
+	def panEdgeUp(self):
+		virtualHeight = self.screenYToVirtual(0, 1) - self.screenYToVirtual(1, 1)
+		self.centerY.set(1 - virtualHeight / 2)
+		self.displayImage()
+	def panEdgeDown(self):
+		virtualHeight = self.screenYToVirtual(0, 1) - self.screenYToVirtual(1, 1)
+		self.centerY.set(virtualHeight / 2)
+		self.displayImage()
+	def panEdgeLeft(self):
+		virtualWidth = self.screenXToVirtual(1, 1) - self.screenXToVirtual(0, 1)
+		self.centerX.set(virtualWidth / 2)
+		self.displayImage()
+	def panEdgeRight(self):
+		virtualWidth = self.screenXToVirtual(1, 1) - self.screenXToVirtual(0, 1)
+		self.centerX.set(1 - virtualWidth / 2)
+		self.displayImage()
+
 	def handleKeys(self, liveKeys, composedKeys):
 		#log.info(f"## {self.liveKeys} {self.composedKeys}")
 
@@ -696,13 +713,13 @@ class CadenceDisplayDriver(HidBrailleDriver):
 				# pan to edge - space + arrow or (up - space + dots123, down - space + dots 456, left - space + dots23, right - space + dots56)
 				if MiniKey.Space in liveKeys:
 					if MiniKey.DPadUp in liveKeys:
-						log.info("up")
+						self.panEdgeUp()
 					elif MiniKey.DPadDown in liveKeys:
-						log.info("down")
+						self.panEdgeDown()
 					elif MiniKey.DPadLeft in liveKeys:
-						log.info("left")
+						self.panEdgeLeft()
 					elif MiniKey.DPadRight in liveKeys:
-						log.info("right")
+						self.panEdgeRight()
 			elif len(liveKeys) == 4:
 				# reset - dots1237
 				if MiniKey.Dot1 in liveKeys and MiniKey.Dot2 in liveKeys and MiniKey.Dot3 in liveKeys and MiniKey.Dot4 in liveKeys:
