@@ -239,7 +239,6 @@ class Slider():
 			if (newValue < self.min.get()): newValue = self.min.get()
 			if (newValue > self.max.get()): newValue = self.max.get()
 		self.set(newValue)
-
 	
 	def roundValue(self, n: float) -> float:
 		if (self.quantize == None): return n
@@ -310,6 +309,21 @@ class Slider():
 		self.signal.reset()
 		self.rate.reset()
 
+	def increaseRate(self):
+		rateRate = self.rateRate
+		n = self.rate.get()
+		if (self.sliderExp):
+			self.rate.set((n - 1) * rateRate + 1)
+		else:
+			self.rate.set(n * rateRate)
+
+	def decreaseRate(self):
+		rateRate = self.rateRate
+		n = self.rate.get()
+		if (self.sliderExp):
+			self.rate.set((n - 1) / rateRate + 1)
+		else:
+			self.rate.set(n / rateRate)
 
 class CombinedSlider():
 	def __init__(self, sliders: list[Slider]):
@@ -616,6 +630,27 @@ class CadenceDisplayDriver(HidBrailleDriver):
 		self.reset()
 		self.displayImage()
 
+	def changePanRate(self, increase):
+		log.info(f"{'increase' if increase else 'decrease'} pan rate")
+		if increase:
+			self.combinedPan.increaseRate()
+		else:
+			self.combinedPan.decreaseRate()
+
+	def changeZoomRate(self, increase):
+		log.info(f"{'increase' if increase else 'decrease'} zoom rate")
+		if increase:
+			self.combinedZoom.increaseRate()
+		else:
+			self.combinedZoom.decreaseRate()
+
+	def changeThresholdRate(self, increase):
+		log.info(f"{'increase' if increase else 'decrease'} threshold rate")
+		if increase:
+			self.bwThreshold.increaseRate()
+		else:
+			self.bwThreshold.decreaseRate()
+
 	def handleKeys(self, liveKeys, composedKeys):
 		#log.info(f"## {self.liveKeys} {self.composedKeys}")
 
@@ -651,13 +686,13 @@ class CadenceDisplayDriver(HidBrailleDriver):
 					increase = (MiniKey.Row1 in liveKeys)
 					# pan faster - row1 + arrow, pan slower - row2 + arrow
 					if MiniKey.DPadUp in liveKeys or MiniKey.DPadDown in liveKeys or MiniKey.DPadLeft in liveKeys or MiniKey.DPadRight in liveKeys:
-						log.info(f"{'increase' if increase else 'decrease'} pan")
+						self.changePanRate(increase)
 					# zoom faster - row1 + pan, zoom slower - row2 + pan
 					elif MiniKey.PanLeft in liveKeys or MiniKey.PanRight in liveKeys:
-						log.info(f"{'increase' if increase else 'decrease'} zoom")
+						self.changeZoomRate(increase)
 					# threshold faster - row1 + dot2, threshold slower row2 + dot2
 					elif MiniKey.Dot2 in liveKeys:
-						log.info(f"{'increase' if increase else 'decrease'} threshold")
+						self.changeThresholdRate(increase)
 				# pan to edge - space + arrow or (up - space + dots123, down - space + dots 456, left - space + dots23, right - space + dots56)
 				if MiniKey.Space in liveKeys:
 					if MiniKey.DPadUp in liveKeys:
