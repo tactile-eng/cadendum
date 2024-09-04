@@ -11,6 +11,7 @@ import ctypes
 import winGDI
 import hwIo.hid
 from enum import Enum
+import math
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
@@ -37,6 +38,20 @@ class MiniKey(Enum):
 	Dot8 = 15
 	Space = 16
 
+# view & navigation
+defaultZoom = 1
+defaultPanRate = 2
+panRateRate = 1.5
+defaultZoomRate = 1.25
+zoomRateRate = 1.5
+bwThresholdOutOf = 100
+defaultBwThresholdRate = 7
+
+class Direction(Enum):
+	Up = 0
+	Down = 1
+	Left = 2
+	Right = 3
 
 class ScreenBitmapResized(ScreenBitmap):
 	def __init__(self, width, height):
@@ -99,12 +114,12 @@ def isSupportEnabled() -> bool:
 	return bdDetect.driverIsEnabledForAutoDetection(CadenceDisplayDriver.name)
 
 def isDeviceCadence(m):
-	log.info(f"possible cadence device {m}")
+	log.info(f"possible cadence device {m} {'Dev_VID&02361f' in m.id}")
 	return "Dev_VID&02361f" in m.id
 
 brailleOffsets = [[0,0], [0,1], [0,2], [1,0], [1,1], [1,2], [0,3], [1,3]]
 
-def bitmapToCell(bitmap, cellNum, numCols, numRows):
+def bitmapToCell(bitmap, cellNum, numCols, numRows, bwThreshold: float, bwReversed: bool, colorMode: int):
 	cellX = cellNum % numCols
 	cellY = math.floor(cellNum / numCols)
 	cellOut = 0
@@ -115,8 +130,19 @@ def bitmapToCell(bitmap, cellNum, numCols, numRows):
 		r = rgb.rgbRed
 		g = rgb.rgbBlue
 		b = rgb.rgbGreen
-		y =  0.299*r + 0.587*g + 0.114*b
-		valBool = y > (255/2)
+		if colorMode == 0:
+			y = 0.299*r + 0.587*g + 0.114*b
+		elif colorMode == 1:
+			y = r
+		elif colorMode == 2:
+			y = g
+		elif colorMode == 3:
+			y = b
+		threshold = bwThreshold / bwThresholdOutOf * 255
+		if bwReversed:
+			valBool = y < threshold
+		else:
+			valBool = y > threshold
 		if valBool:
 			cellOut += 2**pixI
 	return cellOut
@@ -144,6 +170,189 @@ class RunInterval(threading.Thread):
 				log.error(f"{e}")
 				pass
 
+class SignalContainer():
+	def __init__(self, value: float):
+		self.value = value
+		self.default = value
+	
+	def get(self) -> float:
+		return self.value
+
+	def set(self, val: float):
+		self.val = val
+	
+	def reset(self):
+		self.val = self.default
+
+class Slider():
+	# signal, rate, min, max, rateRate, strictMinMax, quantize, name, getRate, setRate, sliderExp, sliderSCurve, doToast, rateToast, valueText, hardMin, hardMax, displayPrecision, displayNumber, unit, notifySoundRelative, htmlId
+
+	def __init__(self, default: float, rateDefault: float, rateRate: float, sliderExp: bool, sliderSCurve: bool, min: float, max: float, strictMinMax: bool):
+		self.signal = SignalContainer(default)
+		self.rate = SignalContainer(rateDefault)
+		self.min = SignalContainer(min)
+		self.max = SignalContainer(max)
+		self.rateRate = rateRate
+		self.sliderExp = sliderExp
+		self.quantize = None
+		self.strictMinMax = strictMinMax
+	
+	def get(self) -> float:
+		return self.signal.get()
+	
+	def set(self, val: float):
+		self.signal.set(val)
+
+	def getRate(self) -> float:
+		return self.rate.get()
+	
+	def setRate(self, val: float):
+		self.rate.set(val)
+
+	def expOrLog(self, value: float, expOrLog: bool):
+		if (self.sliderExp):
+			if (expOrLog):
+				return math.pow(2, value) - 1
+			else:
+				return math.log(value + 1) / math.log(2)
+		elif (self.sliderSCurve):
+			if (value > 1 or value < 0): return value
+			curvyness = 1.75
+			if (expOrLog):
+				return 1 / (1 + math.pow(value / (1 - value), -curvyness))
+			else:
+				if (value == 0.5): return 0.5
+				return 1 / (math.pow(1 / value - 1, 1 / curvyness) + 1)
+		else:
+			return value
+
+	def getNormalised(self):
+		return (self.get() - self.min.get()) / (self.max.get() - self.min.get())
+
+	
+	def setNormalized(self, n: float):
+		newValue = n * (self.max.get() - self.min.get()) + self.min.get()
+		if (self.quantize != None):
+			newValue = self.roundValue(newValue)
+		if (self.strictMinMax):
+			if (newValue < self.min.get()): newValue = self.min.get()
+			if (newValue > self.max.get()): newValue = self.max.get()
+		self.set(newValue)
+
+	
+	def roundValue(self, n: float) -> float:
+		if (self.quantize == None): return n
+
+		min = self.min.get()
+		quantize = self.quantize.get()
+		rounded = math.round((n - min) / quantize) * quantize + min
+
+		max = self.max.get()
+		if (self.strictMinMax):
+			if (rounded < min): rounded = min
+			elif (rounded > max): rounded = max
+		return rounded
+
+	def round(self):
+		if (self.quantize != None):
+			self.set(self.roundValue(self.get()))
+
+	def getRateMinQuantize(self) -> float:
+		rate = self.getRate()
+		if (self.quantize != None and rate < self.quantize.get()):
+			rate = self.quantize.get()
+		return rate
+
+	def rateSCurve(self, n: float, r: float, min: float, max: float) -> float:
+		origNormalized = (n - min) / (max - min)
+		rateNormalized = r / (max - min)
+		origTransformed = self.expOrLog(origNormalized, False)
+		newTransformed = origTransformed + rateNormalized
+		newNormalized = self.expOrLog(newTransformed, True)
+		return newNormalized * (max - min) + min
+
+	def increase(self):
+		n = self.get()
+		
+		if (self.sliderExp):
+			n = n * self.getRate()
+		elif (self.sliderSCurve):
+			n = self.rateSCurve(n, self.getRate(), self.min.get(), self.max.get())
+		else:
+			n = n + self.getRateMinQuantize()
+
+		if (self.strictMinMax and n > self.max.get()):
+			n = self.max.get()
+
+		n = self.roundValue(n)
+
+		self.signal.set(n)
+
+	def decrease(self):
+		n = self.get()
+					
+		if (self.sliderExp):
+			n = n / self.getRate()
+		elif (self.sliderSCurve):
+			n = self.rateSCurve(n, -self.getRate(), self.min.get(), self.max.get())
+		else:
+			n = n - self.getRateMinQuantize()
+
+		if (self.strictMinMax and n < self.min.get()):
+			n = self.min.get()
+
+		n = self.roundValue(n)
+
+		self.signal.set(n)
+
+	def reset(self):
+		self.signal.reset()
+		self.rate.reset()
+
+
+class CombinedSlider():
+	def __init__(self, sliders: list[Slider]):
+		self.sliders = sliders
+
+	def updateSliderRatios(self):
+		firstValue = self.sliders[0].get()
+		self.sliderRatios = []
+		for slider in self.sliders:
+			self.sliderRatios.push(slider.get() / firstValue)
+	
+	def updateSliders(self):
+		firstValue = self.sliders[0].get()
+		for i in range(len(self.sliders)):
+			self.sliders[i].set(firstValue * self.sliderRatios[i - 1])
+
+	def setNormalized(self, n: float):
+		self.updateSliderRatios()
+		super.setNormalized(n)
+		self.updateSliders()
+
+	def increase(self):
+		for slider in self.sliders:
+			slider.increase()
+	
+	def decrease(self):
+		for slider in self.sliders:
+			slider.decrease()
+	
+	def increaseRate(self):
+		for slider in self.sliders:
+			slider.increaseRate()
+	
+	def decreaseRate(self):
+		for slider in self.sliders:
+			slider.decreaseRate()
+
+class PanSlider(Slider):
+	def __init__(self, default: float, rateDefault: float, rateRate: float, sliderExp: bool, sliderSCurve: bool, min: float, max: float, strictMinMax: bool, zoom):
+		super().__init__(default, rateDefault, rateRate, sliderExp, sliderSCurve, min, max, strictMinMax)
+		self.zoom = zoom
+	def getRate(self) -> float:
+		return self.rate.get() / self.zoom()
+
 class CadenceDisplayDriver(HidBrailleDriver):
 	name = "CadenceDisplayDriver"
 	# Translators: The name of a series of braille displays.
@@ -153,10 +362,6 @@ class CadenceDisplayDriver(HidBrailleDriver):
 	lastDisplayedNonImage = None
 	imageTimer = None
 
-	centerX = 0.5
-	centerY = 0.5
-	zoomX = 1
-	zoomY = 1
 	lastFitWidth = -1
 	lastFitHeight = -1
 	prevKeysDown = []
@@ -175,9 +380,55 @@ class CadenceDisplayDriver(HidBrailleDriver):
 		)
 
 	def __init__(self, port="auto"):
-		log.info("cadence driver initialized")
+		log.info(f"cadence driver initialized {port}")
 		super().__init__(port)
 
+		self.zoomX = Slider(defaultZoom,
+			defaultZoomRate,
+			zoomRateRate,
+			True,
+			False,
+			0.00000000001,
+			1000000000,
+			True)
+		self.zoomY = Slider(defaultZoom,
+			defaultZoomRate,
+			zoomRateRate,
+			True,
+			0.00000000001,
+			1000000000,
+			True)
+		self.combinedZoom = CombinedSlider([self.zoomX, self.zoomY])
+		self.centerX = PanSlider(0,
+			defaultPanRate,
+			panRateRate,
+			False,
+			False,
+			0,
+			1,
+			False,
+			lambda: self.zoomX.get() * 24 / 2)
+		self.centerY = PanSlider(0,
+			defaultPanRate,
+			panRateRate,
+			False,
+			False,
+			0,
+			1,
+			False,
+			lambda: self.zoomX.get() * 16 / 2)
+		self.combinedPan = CombinedSlider([self.centerX, self.centerY])
+		self.bwThreshold = Slider(bwThresholdOutOf / 2,
+			defaultBwThresholdRate,
+			1.5,
+			False,
+			True,
+			0,
+			bwThresholdOutOf,
+			True)
+		self.bwReversed = False
+		self.colorMode = 0
+		
 	def doToggleImage(self):
 		self.displayingImage = not self.displayingImage
 		if self.displayingImage:
@@ -221,7 +472,7 @@ class CadenceDisplayDriver(HidBrailleDriver):
 
 		bitmapHolder = ScreenBitmapResized(screenWidth, screenHeight)
 		bitmapBuffer = bitmapHolder.captureImage(left, top, width, height, round(topLeftX), round(topLeftY), round(bottomRightX - topLeftX), round(bottomRightY - topLeftY))
-		testImage = [bitmapToCell(bitmapBuffer, i, self.numCols, self.numRows) for i in range(self.numCells)]
+		testImage = [bitmapToCell(bitmapBuffer, i, self.numCols, self.numRows, self.bwThreshold.get(), self.bwReversed, self.colorMode) for i in range(self.numCells)]
 		self.display(testImage, True)
 	
 	def restoreFromImage(self):
@@ -252,21 +503,21 @@ class CadenceDisplayDriver(HidBrailleDriver):
 		else:
 			return [toDrawWidth / (toDrawHeight * (self.getDisplayWidth() / self.getDisplayHeight())) * 2, 2]
 	def reset(self, toDrawWidth, toDrawHeight):
-		self.centerX = 0.5
-		self.centerY = 0.5
+		self.centerX.set(0.5)
+		self.centerY.set(0.5)
 		fitZoom = self.getFitZoom(toDrawWidth, toDrawHeight)
-		self.zoomX = fitZoom[0]
-		self.zoomY = fitZoom[1]
+		self.zoomX.set(fitZoom[0])
+		self.zoomY.set(fitZoom[1])
 		self.lastFitWidth = toDrawWidth
 		self.lastFitHeight = toDrawHeight
 	def virtualXToScreen(self, actualX, graphWidth):
-		return (actualX - self.centerX) * self.zoomX * ((graphWidth) / 2) + (graphWidth) / 2
+		return (actualX - self.centerX.get()) * self.zoomX.get() * ((graphWidth) / 2) + (graphWidth) / 2
 	def virtualYToScreen(self, actualY, graphHeight):
-		return graphHeight - ((actualY - self.centerY) * self.zoomY * ((graphHeight) / 2) + (graphHeight) / 2)
+		return graphHeight - ((actualY - self.centerY.get()) * self.zoomY.get() * ((graphHeight) / 2) + (graphHeight) / 2)
 	def screenXToVirtual(self, graphX, graphWidth):
-		return ((graphX) - ((graphWidth) / 2)) / ((graphWidth) / 2) / self.zoomX + self.centerX
+		return ((graphX) - ((graphWidth) / 2)) / ((graphWidth) / 2) / self.zoomX.get() + self.centerX.get()
 	def screenYToVirtual(self, graphY, graphHeight):
-		return ((graphHeight - graphY) - ((graphHeight) / 2)) / ((graphHeight) / 2) / self.zoomY + self.centerY
+		return ((graphHeight - graphY) - ((graphHeight) / 2)) / ((graphHeight) / 2) / self.zoomY.get() + self.centerY.get()
 	
 	def _hidOnReceive(self, data: bytes):
 		# log.info("# data: " + " ".join([f"{b:0>8b}" for b in data]))
@@ -314,6 +565,49 @@ class CadenceDisplayDriver(HidBrailleDriver):
 		if not self.displayingImage:
 			super()._handleKeyRelease()
 	
+	def pan(self, direction: Direction):
+		log.info("pan")
+		if direction == Direction.Up:
+			self.centerY.increase()
+		elif direction == Direction.Down:
+			self.centerY.decrease()
+		elif direction == Direction.Left:
+			self.centerX.decrease()
+		elif direction == Direction.Right:
+			self.centerX.increase()
+		self.displayImage()
+	
+	def zoom(self, zoomIn: bool):
+		log.info("zoom")
+		if zoomIn:
+			self.combinedZoom.increase()
+		else:
+			self.combinedZoom.decrease()
+		self.displayImage()
+	
+	def changeThreshold(self, increase: bool):
+		log.info("changeThreshold")
+		if increase:
+			self.bwThreshold.increase()
+		else:
+			self.bwThreshold.decrease()
+		self.displayImage()
+	
+	def reverseThreshold(self):
+		log.info("reverse threshold")
+		self.bwReversed = not self.bwReversed
+		self.displayImage()
+	
+	def cycleColorMode(self):
+		log.info("cycle color mode")
+		self.colorMode = (self.colorMode + 1) % 4
+		self.displayImage()
+	
+	def resetAction(self):
+		log.info("reset")
+		self.reset()
+		self.displayImage()
+
 	def handleKeys(self, liveKeys, composedKeys):
 		#log.info(f"## {self.liveKeys} {self.composedKeys}")
 
@@ -321,29 +615,29 @@ class CadenceDisplayDriver(HidBrailleDriver):
 			if len(liveKeys) == 1:
 				# pan - arrow keys
 				if MiniKey.DPadUp in liveKeys:
-					log.info("up")
+					self.pan(Direction.Up)
 				elif MiniKey.DPadDown in liveKeys:
-					log.info("down")
+					self.pan(Direction.Down)
 				elif MiniKey.DPadLeft in liveKeys:
-					log.info("left")
+					self.pan(Direction.Left)
 				elif MiniKey.DPadRight in liveKeys:
-					log.info("right")
+					self.pan(Direction.Right)
 				# zoom in - pan right, zoom out - pan left
 				elif MiniKey.PanRight in liveKeys:
-					log.info("zoom in")
+					self.zoom(True)
 				elif MiniKey.PanLeft in liveKeys:
-					log.info("zoom out")
+					self.zoom(False)
 				# increase threshold - dot7, decrease threshold - dot3
 				elif MiniKey.Dot7 in liveKeys:
-					log.info("increase threshold")
+					self.changeThreshold(True)
 				elif MiniKey.Dot3 in liveKeys:
-					log.info("decrease threshold")
+					self.changeThreshold(False)
 				# reverse threshold - dot2
 				elif MiniKey.Dot2 in liveKeys:
-					log.info("reverse threshold")
+					self.reverseThreshold()
 				# cycle color mode - dot1
 				elif MiniKey.Dot1 in liveKeys:
-					log.info("cycle color mode")
+					self.cycleColorMode()
 			elif len(liveKeys) == 2:
 				if MiniKey.Row1 in liveKeys or MiniKey.Row2 in liveKeys:
 					increase = (MiniKey.Row1 in liveKeys)
@@ -369,10 +663,10 @@ class CadenceDisplayDriver(HidBrailleDriver):
 			elif len(liveKeys) == 4:
 				# reset - dots1237
 				if MiniKey.Dot1 in liveKeys and MiniKey.Dot2 in liveKeys and MiniKey.Dot3 in liveKeys and MiniKey.Dot4 in liveKeys:
-					log.info("reset")
+					self.resetAction()
 	
 		if len(liveKeys) == 1:
 			if MiniKey.Row4 in liveKeys:
 				self.doToggleImage()
 
-BrailleDisplayDriver = CadenceDisplayDriver
+BrailleDisplayDriver = CadenceDisplayDriver()
