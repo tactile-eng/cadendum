@@ -179,10 +179,10 @@ class SignalContainer():
 		return self.value
 
 	def set(self, val: float):
-		self.val = val
+		self.value = val
 	
 	def reset(self):
-		self.val = self.default
+		self.value = self.default
 
 class Slider():
 	# signal, rate, min, max, rateRate, strictMinMax, quantize, name, getRate, setRate, sliderExp, sliderSCurve, doToast, rateToast, valueText, hardMin, hardMax, displayPrecision, displayNumber, unit, notifySoundRelative, htmlId
@@ -194,6 +194,7 @@ class Slider():
 		self.max = SignalContainer(max)
 		self.rateRate = rateRate
 		self.sliderExp = sliderExp
+		self.sliderSCurve = sliderSCurve
 		self.quantize = None
 		self.strictMinMax = strictMinMax
 	
@@ -395,6 +396,7 @@ class CadenceDisplayDriver(HidBrailleDriver):
 			defaultZoomRate,
 			zoomRateRate,
 			True,
+			False,
 			0.00000000001,
 			1000000000,
 			True)
@@ -406,7 +408,7 @@ class CadenceDisplayDriver(HidBrailleDriver):
 			False,
 			0,
 			1,
-			False,
+			True,
 			lambda: self.zoomX.get() * 24 / 2)
 		self.centerY = PanSlider(0,
 			defaultPanRate,
@@ -415,7 +417,7 @@ class CadenceDisplayDriver(HidBrailleDriver):
 			False,
 			0,
 			1,
-			False,
+			True,
 			lambda: self.zoomX.get() * 16 / 2)
 		self.combinedPan = CombinedSlider([self.centerX, self.centerY])
 		self.bwThreshold = Slider(bwThresholdOutOf / 2,
@@ -464,13 +466,14 @@ class CadenceDisplayDriver(HidBrailleDriver):
 		screenHeight = self.getDisplayHeight()
 
 		topLeftX = self.screenXToVirtual(0, self.getDisplayWidth()) * width
-		bottomRightY = self.screenYToVirtual(0, self.getDisplayHeight()) * height
+		topLeftY = height - self.screenYToVirtual(0, self.getDisplayHeight()) * height
 		bottomRightX = self.screenXToVirtual(self.getDisplayWidth(), self.getDisplayWidth()) * width
-		topLeftY = self.screenYToVirtual(self.getDisplayHeight(), self.getDisplayHeight()) * height
+		bottomRightY = height - self.screenYToVirtual(self.getDisplayHeight(), self.getDisplayHeight()) * height
 
-#		log.info(f"{topLeftX} {topLeftY} {bottomRightX} {bottomRightY}")
+		# log.info(f"{topLeftX} {topLeftY} {bottomRightX} {bottomRightY}")
 
 		bitmapHolder = ScreenBitmapResized(screenWidth, screenHeight)
+		# TODO don't round here
 		bitmapBuffer = bitmapHolder.captureImage(left, top, width, height, round(topLeftX), round(topLeftY), round(bottomRightX - topLeftX), round(bottomRightY - topLeftY))
 		testImage = [bitmapToCell(bitmapBuffer, i, self.numCols, self.numRows, self.bwThreshold.get(), self.bwReversed, self.colorMode) for i in range(self.numCells)]
 		self.display(testImage, True)
@@ -480,6 +483,7 @@ class CadenceDisplayDriver(HidBrailleDriver):
 			self.display(self.lastDisplayedNonImage)
 
 	def display(self, cells: List[int], isImage = False):
+		# log.info(f"display {isImage} {self.displayingImage} {cells}")
 		if not isImage:
 			self.lastDisplayedNonImage = cells
 		if isImage == self.displayingImage:
@@ -510,6 +514,10 @@ class CadenceDisplayDriver(HidBrailleDriver):
 		self.zoomY.set(fitZoom[1])
 		self.lastFitWidth = toDrawWidth
 		self.lastFitHeight = toDrawHeight
+		self.bwThreshold.reset()
+		self.colorMode = 0
+		self.bwReversed = False
+		# log.info(f"################## reset {self.centerX.get()} {self.centerY.get()} / {self.zoomX.get()} {self.zoomY.get()} / {toDrawWidth} {toDrawHeight}")
 	def virtualXToScreen(self, actualX, graphWidth):
 		return (actualX - self.centerX.get()) * self.zoomX.get() * ((graphWidth) / 2) + (graphWidth) / 2
 	def virtualYToScreen(self, actualY, graphHeight):
@@ -669,4 +677,4 @@ class CadenceDisplayDriver(HidBrailleDriver):
 			if MiniKey.Row4 in liveKeys:
 				self.doToggleImage()
 
-BrailleDisplayDriver = CadenceDisplayDriver()
+BrailleDisplayDriver = CadenceDisplayDriver
