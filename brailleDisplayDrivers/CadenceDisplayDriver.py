@@ -149,15 +149,12 @@ def bitmapToCell(bitmap, cellNum, numCols, numRows, bwThreshold: float, bwRevers
 
 # https://stackoverflow.com/questions/12435211/threading-timer-repeat-function-every-n-seconds
 class RunInterval(threading.Thread):
-	stopFlag = threading.Event()
-	interval = 1
-	callback = None
-
 	def __init__(self, callback, interval = 1):
 		super().__init__()
 		self.callback = callback
 		self.interval = interval
 		self.daemon = True
+		self.stopFlag = threading.Event()
 	
 	def cancel(self):
 		self.stopFlag.set()
