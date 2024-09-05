@@ -115,7 +115,7 @@ def isSupportEnabled() -> bool:
 
 def isDeviceCadence(m):
 	log.info(f"possible cadence device {m} {'Dev_VID&02361f' in m.id}")
-	return "Dev_VID&02361f" in m.id
+	return "Dev_VID&02361f_PID&52ae" in m.id
 
 brailleOffsets = [[0,0], [0,1], [0,2], [1,0], [1,1], [1,2], [0,3], [1,3]]
 
@@ -382,10 +382,12 @@ class CadenceDisplayDriver(HidBrailleDriver):
 
 	@classmethod
 	def registerAutomaticDetection(cls, driverRegistrar: bdDetect.DriverRegistrar):
-		# TODO USB
-		# driverRegistrar.addUsbDevices(
-		# 	lambda m: isDeviceCadence(m)
-		# )
+		driverRegistrar.addUsbDevices(
+			bdDetect.DeviceType.HID,
+			{
+				"VID_361F&PID_52AE",
+			},
+		)
 
 		driverRegistrar.addBluetoothDevices(
 			lambda m: isDeviceCadence(m)
