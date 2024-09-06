@@ -12,6 +12,7 @@ import winGDI
 import hwIo.hid
 from enum import Enum
 import math
+import braille
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
@@ -365,20 +366,9 @@ class PanSlider(Slider):
 	def getRate(self) -> float:
 		return self.rate.get() / self.zoom()
 
-class CadenceDisplayDriver(HidBrailleDriver):
+class CadenceDeviceDriver(HidBrailleDriver):
 	name = "CadenceDisplayDriver"
-	# Translators: The name of a series of braille displays.
 	description = _("Cadence HID Braille Display")
-
-	displayingImage = False
-	lastDisplayedNonImage = None
-	imageTimer = None
-
-	lastFitWidth = -1
-	lastFitHeight = -1
-	prevKeysDown = []
-	liveKeys = []
-	composedKeys = []
 
 	@classmethod
 	def registerAutomaticDetection(cls, driverRegistrar: bdDetect.DriverRegistrar):
@@ -393,9 +383,76 @@ class CadenceDisplayDriver(HidBrailleDriver):
 			lambda m: isDeviceCadence(m)
 		)
 
-	def __init__(self, port="auto"):
-		log.info(f"cadence driver initialized {port}")
+	def __init__(self, port, displayDriver):
 		super().__init__(port)
+		self.displayDriver = displayDriver
+		log.info(f"########## CADENCE DEVICE {port} {self._dev}")
+
+	def _hidOnReceive(self, data: bytes):
+		super()._hidOnReceive(data)
+		self.displayDriver._hidOnReceive(data)
+	def _handleKeyRelease(self):
+		if not self.displayDriver.displayingImage:
+			super()._handleKeyRelease()
+
+
+class CadenceDisplayDriver(braille.BrailleDisplayDriver):
+	name = "CadenceDisplayDriver"
+	# Translators: The name of a series of braille displays.
+	description = _("Cadence HID Braille Display")
+	isThreadSafe = True
+	supportsAutomaticDetection = True
+
+	displayingImage = False
+	lastDisplayedNonImage = None
+	imageTimer = None
+
+	lastFitWidth = -1
+	lastFitHeight = -1
+	prevKeysDown = []
+	liveKeys = []
+	composedKeys = []
+
+	devices: list[CadenceDeviceDriver] = []
+
+	@classmethod
+	def registerAutomaticDetection(cls, driverRegistrar: bdDetect.DriverRegistrar):
+		driverRegistrar.addUsbDevices(
+			bdDetect.DeviceType.HID,
+			{
+				"VID_361F&PID_52AE",
+			},
+		)
+
+		driverRegistrar.addBluetoothDevices(
+			lambda m: isDeviceCadence(m)
+		)
+
+	def __init__(self, port):
+		super().__init__()
+
+		self.devices = []
+		for devMatch in self._getTryPorts("usb"):
+			if devMatch.type != bdDetect.DeviceType.HID:
+				continue
+			device = CadenceDeviceDriver(devMatch, self)
+			self.devices.append(device)
+		
+		# TODO figure out a way to determine which usb and bluetooth connections are the same device in case we want to connect to a mix of USB and bluetooth devices
+		if len(self.devices) == 0:
+			for devMatch in self._getTryPorts("bluetooth"):
+				if devMatch.type != bdDetect.DeviceType.HID:
+					continue
+				device = CadenceDeviceDriver(devMatch, self)
+				self.devices.append(device)
+		
+		if len(self.devices) == 0:
+			raise RuntimeError("no cadence devices")
+
+		log.info(f"########################## cadence driver initialized {port} {self.devices}")
+
+		self.numRows = self.devices[0].numRows
+		self.numCols = self.devices[0].numCols
 
 		self.zoomX = Slider(defaultZoom,
 			defaultZoomRate,
@@ -500,10 +557,13 @@ class CadenceDisplayDriver(HidBrailleDriver):
 		if not isImage:
 			self.lastDisplayedNonImage = cells
 		if isImage == self.displayingImage:
-			super().display(cells)
+			for device in self.devices:
+				device.display(cells)
 
 	def terminate(self):
 		super().terminate()
+		for device in self.devices:
+			device.terminate()
 		if self.imageTimer is not None:
 			self.imageTimer.cancel()
 			self.imageTimer = None
@@ -581,10 +641,6 @@ class CadenceDisplayDriver(HidBrailleDriver):
 				self.composedKeys = []
 			
 			self.prevKeysDown = keysDown
-		super()._hidOnReceive(data)
-	def _handleKeyRelease(self):
-		if not self.displayingImage:
-			super()._handleKeyRelease()
 	
 	def pan(self, direction: Direction):
 		log.info("pan")
