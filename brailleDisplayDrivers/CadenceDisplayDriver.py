@@ -13,6 +13,7 @@ import hwIo.hid
 from enum import Enum
 import math
 import braille
+import inputCore
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
@@ -387,6 +388,8 @@ class CadenceDeviceDriver(HidBrailleDriver):
 		super().__init__(port)
 		self.displayDriver = displayDriver
 		log.info(f"########## CADENCE DEVICE {port} {self._dev}")
+		# for i in self._inputButtonCapsByDataIndex :
+		# 	log.info(f"# {i} / {self._inputButtonCapsByDataIndex[i]}")
 
 	def _hidOnReceive(self, data: bytes):
 		super()._hidOnReceive(data)
@@ -783,5 +786,55 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		if len(liveKeys) == 1:
 			if MiniKey.Row4 in liveKeys:
 				self.doToggleImage()
+	
+	gestureMap = inputCore.GlobalGestureMap(
+		{
+			"globalCommands.GlobalCommands": {
+				"braille_scrollBack": (
+					"br(hidBrailleStandard):panLeft",
+					"br(hidBrailleStandard):rockerUp",
+				),
+				"braille_scrollForward": (
+					"br(hidBrailleStandard):panRight",
+					"br(hidBrailleStandard):rockerDown",
+				),
+				"braille_routeTo": ("br(hidBrailleStandard):routerSet1_routerKey",),
+				"braille_toggleTether": ("br(hidBrailleStandard):up+down",),
+				"kb:upArrow": (
+					"br(hidBrailleStandard):joystickUp",
+					"br(hidBrailleStandard):dpadUp",
+					"br(hidBrailleStandard):space+dot1",
+				),
+				"kb:downArrow": (
+					"br(hidBrailleStandard):joystickDown",
+					"br(hidBrailleStandard):dpadDown",
+					"br(hidBrailleStandard):space+dot4",
+				),
+				"kb:leftArrow": (
+					"br(hidBrailleStandard):space+dot3",
+					"br(hidBrailleStandard):joystickLeft",
+					"br(hidBrailleStandard):dpadLeft",
+				),
+				"kb:rightArrow": (
+					"br(hidBrailleStandard):space+dot6",
+					"br(hidBrailleStandard):joystickRight",
+					"br(hidBrailleStandard):dpadRight",
+				),
+				"showGui": ("br(hidBrailleStandard):space+dot1+dot3+dot4+dot5",),
+				"kb:shift+tab": ("br(hidBrailleStandard):space+dot1+dot3",),
+				"kb:tab": ("br(hidBrailleStandard):space+dot4+dot6",),
+				"kb:alt": ("br(hidBrailleStandard):space+dot1+dot3+dot4",),
+				"kb:escape": ("br(hidBrailleStandard):space+dot1+dot5",),
+				"kb:enter": (
+					"br(hidBrailleStandard):joystickCenter",
+					"br(hidBrailleStandard):dpadCenter",
+				),
+				"kb:windows+d": ("br(hidBrailleStandard):Space+dot1+dot4+dot5",),
+				"kb:windows": ("br(hidBrailleStandard):space+dot3+dot4",),
+				"kb:alt+tab": ("br(hidBrailleStandard):space+dot2+dot3+dot4+dot5",),
+				"sayAll": ("br(hidBrailleStandard):Space+dot1+dot2+dot3+dot4+dot5+dot6",),
+			},
+		},
+	)
 
 BrailleDisplayDriver = CadenceDisplayDriver
