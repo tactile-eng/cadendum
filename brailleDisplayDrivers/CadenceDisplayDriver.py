@@ -40,6 +40,16 @@ class MiniKey(Enum):
 	Dot8 = 15
 	Space = 16
 
+class DevSide(Enum):
+	Left = 0
+	Right = 1
+
+class DevPosition(Enum):
+	BottomLeft = 0
+	BottomRight = 1
+	TopLeft = 2
+	TopRight = 3
+
 # view & navigation
 defaultZoom = 1
 defaultPanRate = 2
@@ -121,33 +131,77 @@ def isDeviceCadence(m):
 
 brailleOffsets = [[0,0], [0,1], [0,2], [1,0], [1,1], [1,2], [0,3], [1,3]]
 
-def bitmapToCell(bitmap, cellNum, numCols, numRows, bwThreshold: float, bwReversed: bool, colorMode: int):
-	cellX = cellNum % numCols
-	cellY = math.floor(cellNum / numCols)
-	cellOut = 0
-	for (pixI, offset) in enumerate(brailleOffsets):
-		sourceX = cellX * 2 + offset[0]
-		sourceY = cellY * 4 + offset[1]
-		rgb = bitmap[sourceY][sourceX]
-		r = rgb.rgbRed
-		g = rgb.rgbBlue
-		b = rgb.rgbGreen
-		if colorMode == 0:
-			y = 0.299*r + 0.587*g + 0.114*b
-		elif colorMode == 1:
-			y = r
-		elif colorMode == 2:
-			y = g
-		elif colorMode == 3:
-			y = b
-		threshold = bwThreshold / bwThresholdOutOf * 255
-		if bwReversed:
-			valBool = y < threshold
-		else:
-			valBool = y > threshold
-		if valBool:
-			cellOut += 2**pixI
-	return cellOut
+def debugImage(image: list[list[bool]]) -> str:
+	return "\n".join(["".join(["#" if pix else " " for pix in row]) for row in image])
+
+def imageToCells(image: list[list[bool]]) -> list[int]:
+	height = len(image)
+	width = len(image[0])
+	numCols = int(width / 2)
+	numRows = int(height / 4)
+	out: list[int] = []
+	for cellY in range(numRows):
+		for cellX in range(numCols):
+			cellOut = 0
+			for (pixI, offset) in enumerate(brailleOffsets):
+				sourceX = cellX * 2 + offset[0]
+				sourceY = cellY * 4 + offset[1]
+				valBool = image[sourceY][sourceX]
+				if valBool:
+					cellOut += 2**pixI
+			out.append(cellOut)
+	return out
+
+def cellsToImage(cells: list[int], numRows: int) -> list[list[bool]]:
+	numCols = int(len(cells) / numRows)
+	height = numRows * 4
+	width = numCols * 2
+	log.info(f"############# cellsToImage {width}x{height}")
+	image: list[list[bool]] = [[False for x in range(width)] for y in range(height)]
+	for cellI, cell in enumerate(cells):
+		cellX = cellI % numCols
+		cellY = math.floor(cellI / numCols)
+		for (pixI, offset) in enumerate(brailleOffsets):
+			x = cellX * 2 + offset[0]
+			y = cellY * 4 + offset[1]
+			val = ((cell >> pixI) & 1) == 1
+			image[y][x] = val
+	return image
+
+def bitmapToImage(bitmap, width: int, height: int, bwThreshold: float, bwReversed: bool, colorMode: int) -> list[list[bool]]:
+	imageOut: list[list[bool]] = []
+	log.info(f"############# bitmapToImage {width}x{height}")
+	for y in range(height):
+		row: list[bool] = []
+		for x in range(width):
+			rgb = bitmap[y][x]
+			r = rgb.rgbRed
+			g = rgb.rgbBlue
+			b = rgb.rgbGreen
+			if colorMode == 0:
+				val = 0.299*r + 0.587*g + 0.114*b
+			elif colorMode == 1:
+				val = r
+			elif colorMode == 2:
+				val = g
+			elif colorMode == 3:
+				val = b
+			threshold = bwThreshold / bwThresholdOutOf * 255
+			if bwReversed:
+				valBool = val < threshold
+			else:
+				valBool = val > threshold
+			row.append(valBool)
+		imageOut.append(row)
+	return imageOut
+
+def flipImage(image: list[list[bool]]) -> list[list[bool]]:
+	height = len(image)
+	width = len(image[0])
+	return [[image[height - y - 1][width - x - 1] for x in range(width)] for y in range(height)]
+
+def joinImagesHorizontally(imageLeft: list[list[bool]], imageRight: list[list[bool]]):
+	return [rowLeft + rowRight for (rowLeft, rowRight) in zip(imageLeft, imageRight)]
 
 # https://stackoverflow.com/questions/12435211/threading-timer-repeat-function-every-n-seconds
 class RunInterval(threading.Thread):
@@ -384,20 +438,44 @@ class CadenceDeviceDriver(HidBrailleDriver):
 			lambda m: isDeviceCadence(m)
 		)
 
-	def __init__(self, port, displayDriver):
+	def __init__(self, port, displayDriver, devIndex):
 		super().__init__(port)
 		self.displayDriver = displayDriver
+		self.devIndex = devIndex
 		log.info(f"########## CADENCE DEVICE {port} {self._dev}")
+
+		self.isTop = False
+		self.isTall = False
 		# for i in self._inputButtonCapsByDataIndex :
 		# 	log.info(f"# {i} / {self._inputButtonCapsByDataIndex[i]}")
 
 	def _hidOnReceive(self, data: bytes):
 		super()._hidOnReceive(data)
-		self.displayDriver._hidOnReceive(data)
+		self.displayDriver._hidOnReceive(data, self.devIndex)
 	def _handleKeyRelease(self):
 		if not self.displayDriver.displayingImage:
 			super()._handleKeyRelease()
-
+	
+	def isTwoDevices(self):
+		return self.numCols > 12
+	
+	def getPostion(self, side: DevSide) -> DevPosition:
+		if side == DevSide.Left:
+			if self.isTop:
+				return DevPosition.TopRight
+			else:
+				return DevPosition.BottomLeft
+		else:
+			if self.isTall:
+				if self.isTop:
+					return DevPosition.BottomRight
+				else:
+					return DevPosition.TopLeft
+			else:
+				if self.isTop:
+					return DevPosition.TopLeft
+				else:
+					return DevPosition.BottomRight
 
 class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 	name = "CadenceDisplayDriver"
@@ -438,7 +516,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		for devMatch in self._getTryPorts("usb"):
 			if devMatch.type != bdDetect.DeviceType.HID:
 				continue
-			device = CadenceDeviceDriver(devMatch, self)
+			device = CadenceDeviceDriver(devMatch, self, len(self.devices))
 			self.devices.append(device)
 		
 		# TODO figure out a way to determine which usb and bluetooth connections are the same device in case we want to connect to a mix of USB and bluetooth devices
@@ -446,7 +524,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 			for devMatch in self._getTryPorts("bluetooth"):
 				if devMatch.type != bdDetect.DeviceType.HID:
 					continue
-				device = CadenceDeviceDriver(devMatch, self)
+				device = CadenceDeviceDriver(devMatch, self, len(self.devices))
 				self.devices.append(device)
 		
 		if len(self.devices) == 0:
@@ -454,8 +532,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 
 		log.info(f"########################## cadence driver initialized {port} {self.devices}")
 
-		self.numRows = self.devices[0].numRows
-		self.numCols = self.devices[0].numCols
+		self.updateScreenSize()
 
 		self.zoomX = Slider(defaultZoom,
 			defaultZoomRate,
@@ -548,20 +625,46 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		bitmapHolder = ScreenBitmapResized(screenWidth, screenHeight)
 		# TODO don't round here
 		bitmapBuffer = bitmapHolder.captureImage(left, top, width, height, round(topLeftX), round(topLeftY), round(bottomRightX - topLeftX), round(bottomRightY - topLeftY))
-		testImage = [bitmapToCell(bitmapBuffer, i, self.numCols, self.numRows, self.bwThreshold.get(), self.bwReversed, self.colorMode) for i in range(self.numCells)]
-		self.display(testImage, True)
+		boolImage = bitmapToImage(bitmapBuffer, screenWidth, screenHeight, self.bwThreshold.get(), self.bwReversed, self.colorMode)
+		cells = imageToCells(boolImage)
+		self.display(cells, True)
 	
 	def restoreFromImage(self):
 		if self.lastDisplayedNonImage is not None:
 			self.display(self.lastDisplayedNonImage)
+
+	def getImage(self, fullImage: list[list[bool]], pos: DevPosition) -> list[list[bool]]:
+		xOffset = (24 if (pos == DevPosition.TopRight or pos == DevPosition.BottomRight) else 0) - self.offsetCols * 2
+		yOffset = (16 if (pos == DevPosition.BottomLeft or pos == DevPosition.BottomRight) else 0) - self.offsetRows * 4
+		image = [[fullImage[y + yOffset][x + xOffset] for x in range(24)] for y in range(16)]
+		if pos == DevPosition.TopLeft or pos == DevPosition.TopRight:
+			image = flipImage(image)
+		return image
 
 	def display(self, cells: List[int], isImage = False):
 		# log.info(f"display {isImage} {self.displayingImage} {cells}")
 		if not isImage:
 			self.lastDisplayedNonImage = cells
 		if isImage == self.displayingImage:
+			fullImage = cellsToImage(cells, self.numRows)
+			log.info(f"orig {len(fullImage[0])}x{len(fullImage)}")
+			log.info(debugImage(fullImage))
 			for device in self.devices:
-				device.display(cells)
+				leftDevPos = device.getPostion(DevSide.Left)
+				image = self.getImage(fullImage, leftDevPos)
+				log.info(f"left {len(image[0])}x{len(image)}")
+				log.info(debugImage(image))
+				if device.isTwoDevices():
+					rightDevPos = device.getPostion(DevSide.Right)
+					rightSideImage = self.getImage(fullImage, rightDevPos)
+					log.info(f"right {len(rightSideImage[0])}x{len(rightSideImage)}")
+					image = joinImagesHorizontally(image, rightSideImage)
+					log.info(f"combined {len(image[0])}x{len(image)}")
+				log.info(debugImage(image))
+				devCells = imageToCells(image)
+				log.info(f"cells {devCells}")
+				log.info(debugImage(cellsToImage(devCells, self.numRows)))
+				device.display(devCells)
 
 	def terminate(self):
 		super().terminate()
@@ -603,24 +706,35 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 	def screenYToVirtual(self, graphY, graphHeight):
 		return ((graphHeight - graphY) - ((graphHeight) / 2)) / ((graphHeight) / 2) / self.zoomY.get() + self.centerY.get()
 	
-	def _hidOnReceive(self, data: bytes):
+	def _hidOnReceive(self, data: bytes, devIndex: int):
 		# log.info("# data: " + " ".join([f"{b:0>8b}" for b in data]))
-		if len(data) == 5:
-			keysDown = []
+		if len(data) == 5 or len(data) == 7:
+			keysDown = [key for key in self.prevKeysDown if key[1][0] != devIndex]
 			for byteI, byte in enumerate(data):
 				for bitI in range(8):
 					if byte & (1 << bitI):
-						key = MiniKey(byteI * 8 + bitI)
-						if key == MiniKey.Dot4:
-							key = MiniKey.Dot1
-						elif key == MiniKey.Dot5:
-							key = MiniKey.Dot2
-						elif key == MiniKey.Dot6:
-							key = MiniKey.Dot3
-						elif key == MiniKey.Dot8:
-							key = MiniKey.Dot7
+						index = byteI * 8 + bitI
+						# log.info(f"## key {index}")
+						devSide = DevSide.Left
+						if len(data) == 7:
+							if index > 16 and index <= 24:
+								index -= 8
+								devSide = DevSide.Right
+							elif index > 36:
+								index -= 16
+								devSide = DevSide.Right
+						key = MiniKey(index)
+						if len(data) == 5:
+							if key == MiniKey.Dot4:
+								key = MiniKey.Dot1
+							elif key == MiniKey.Dot5:
+								key = MiniKey.Dot2
+							elif key == MiniKey.Dot6:
+								key = MiniKey.Dot3
+							elif key == MiniKey.Dot8:
+								key = MiniKey.Dot7
 						if not key in keysDown:
-							keysDown.append(key)
+							keysDown.append((key, (devIndex, devSide)))
 			newKeys = [key for key in keysDown if key not in self.prevKeysDown]
 			keysUp = [key for key in self.prevKeysDown if not key in keysDown]
 			if len(newKeys) > 0:
@@ -726,8 +840,35 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		self.centerX.set(1 - virtualWidth / 2)
 		self.displayImage()
 
+	def updateScreenSize(self):
+		devPositions: list[DevPosition] = []
+		for device in self.devices:
+			devPositions.append(device.getPostion(DevSide.Left))
+			if device.isTwoDevices():
+				devPositions.append(device.getPostion(DevSide.Right))
+			
+		self.offsetCols = 0
+		self.offsetRows = 0
+		
+		if (DevPosition.BottomLeft in devPositions or DevPosition.TopLeft in devPositions) and (DevPosition.BottomRight in devPositions or DevPosition.TopRight in devPositions):
+			self.numCols = 24
+		else:
+			if DevPosition.BottomRight in devPositions or DevPosition.TopRight in devPositions:
+				self.offsetCols = 12
+			self.numCols = 12
+
+		if (DevPosition.BottomLeft in devPositions or DevPosition.BottomRight in devPositions) and (DevPosition.TopLeft in devPositions or DevPosition.TopRight in devPositions):
+			self.numRows = 8
+		else:
+			if DevPosition.BottomLeft in devPositions or DevPosition.BottomRight in devPositions:
+				self.offsetRows = 4
+			self.numRows = 4
+
+	def getDevPosition(self, device: tuple[int, DevSide]) -> DevPosition:
+		return self.devices[device[0]].getPostion(device[1])
+
 	def handleKeys(self, liveKeys, composedKeys):
-		#log.info(f"## {self.liveKeys} {self.composedKeys}")
+		log.info(f"## {self.liveKeys} {self.composedKeys}")
 
 		if self.displayingImage:
 			if len(liveKeys) == 1:
