@@ -18,6 +18,7 @@ import inputCore
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
 
+# device buttons
 class MiniKey(Enum):
 	DPadUp = 25
 	DPadDown = 26
@@ -40,17 +41,64 @@ class MiniKey(Enum):
 	Dot8 = 15
 	Space = 16
 
+# key IDs for right-side device when using two-device mode
+rightKeys = {
+	41: MiniKey.DPadUp,
+	42: MiniKey.DPadDown,
+	44: MiniKey.DPadRight,
+	43: MiniKey.DPadLeft,
+	40: MiniKey.DPadCenter,
+	19: MiniKey.PanRight,
+	21: MiniKey.PanLeft,
+	48: MiniKey.Row1,
+	49: MiniKey.Row2,
+	50: MiniKey.Row3,
+	51: MiniKey.Row4,
+	17: MiniKey.Space,
+}
+
+# map keys for when device is upside-down
+flippedKeys = {
+	MiniKey.DPadUp: MiniKey.DPadDown,
+	MiniKey.DPadDown: MiniKey.DPadUp,
+	MiniKey.DPadLeft: MiniKey.DPadRight,
+	MiniKey.DPadRight: MiniKey.DPadLeft,
+	MiniKey.PanLeft: MiniKey.PanRight,
+	MiniKey.PanRight: MiniKey.PanLeft,
+	MiniKey.Row1: MiniKey.Row4,
+	MiniKey.Row2: MiniKey.Row3,
+	MiniKey.Row3: MiniKey.Row2,
+	MiniKey.Row4: MiniKey.Row1,
+	MiniKey.Dot1: MiniKey.Dot4,
+	MiniKey.Dot2: MiniKey.Dot5,
+	MiniKey.Dot3: MiniKey.Dot6,
+	MiniKey.Dot4: MiniKey.Dot1,
+	MiniKey.Dot5: MiniKey.Dot2,
+	MiniKey.Dot6: MiniKey.Dot3,
+	MiniKey.Dot7: MiniKey.Dot8,
+	MiniKey.Dot8: MiniKey.Dot7,
+}
+
+# whether the device is a left type or right type
 class DevSide(Enum):
 	Left = 0
 	Right = 1
 
+# a position for where the device is
 class DevPosition(Enum):
 	BottomLeft = 0
 	BottomRight = 1
 	TopLeft = 2
 	TopRight = 3
 
-# view & navigation
+# a cardinal direction
+class Direction(Enum):
+	Up = 0
+	Down = 1
+	Left = 2
+	Right = 3
+
+# view & navigation constants
 defaultZoom = 1
 defaultPanRate = 2
 panRateRate = 1.5
@@ -58,12 +106,6 @@ defaultZoomRate = 1.25
 zoomRateRate = 1.5
 bwThresholdOutOf = 100
 defaultBwThresholdRate = 7
-
-class Direction(Enum):
-	Up = 0
-	Down = 1
-	Left = 2
-	Right = 3
 
 class ScreenBitmapResized(ScreenBitmap):
 	def __init__(self, width, height):
@@ -122,18 +164,23 @@ class ScreenBitmapResized(ScreenBitmap):
 
 		return buffer
 
+# is driver enabled?
 def isSupportEnabled() -> bool:
 	return bdDetect.driverIsEnabledForAutoDetection(CadenceDisplayDriver.name)
 
+# is a bluetooth device a Cadence device?
 def isDeviceCadence(m):
 	log.info(f"possible cadence device {m} {'Dev_VID&02361f' in m.id}")
 	return "Dev_VID&02361f_PID&52ae" in m.id
 
+# braille dot order
 brailleOffsets = [[0,0], [0,1], [0,2], [1,0], [1,1], [1,2], [0,3], [1,3]]
 
+# for debugging purposes
 def debugImage(image: list[list[bool]]) -> str:
 	return "\n".join(["".join(["#" if pix else " " for pix in row]) for row in image])
 
+# boolean 2d array to list of braille codes
 def imageToCells(image: list[list[bool]]) -> list[int]:
 	height = len(image)
 	width = len(image[0])
@@ -152,11 +199,11 @@ def imageToCells(image: list[list[bool]]) -> list[int]:
 			out.append(cellOut)
 	return out
 
+# list of braille codes to boolean 2d array
 def cellsToImage(cells: list[int], numRows: int) -> list[list[bool]]:
 	numCols = int(len(cells) / numRows)
 	height = numRows * 4
 	width = numCols * 2
-	log.info(f"############# cellsToImage {width}x{height}")
 	image: list[list[bool]] = [[False for x in range(width)] for y in range(height)]
 	for cellI, cell in enumerate(cells):
 		cellX = cellI % numCols
@@ -168,9 +215,9 @@ def cellsToImage(cells: list[int], numRows: int) -> list[list[bool]]:
 			image[y][x] = val
 	return image
 
+# winGDI bitmap to boolean 2d array
 def bitmapToImage(bitmap, width: int, height: int, bwThreshold: float, bwReversed: bool, colorMode: int) -> list[list[bool]]:
 	imageOut: list[list[bool]] = []
-	log.info(f"############# bitmapToImage {width}x{height}")
 	for y in range(height):
 		row: list[bool] = []
 		for x in range(width):
@@ -195,14 +242,17 @@ def bitmapToImage(bitmap, width: int, height: int, bwThreshold: float, bwReverse
 		imageOut.append(row)
 	return imageOut
 
+# flip boolean 2d array 180 degrees
 def flipImage(image: list[list[bool]]) -> list[list[bool]]:
 	height = len(image)
 	width = len(image[0])
 	return [[image[height - y - 1][width - x - 1] for x in range(width)] for y in range(height)]
 
+# join two boolean 2d arrays horizontally
 def joinImagesHorizontally(imageLeft: list[list[bool]], imageRight: list[list[bool]]):
 	return [rowLeft + rowRight for (rowLeft, rowRight) in zip(imageLeft, imageRight)]
 
+# a timer that repeatedly runs a function every n seconds
 # https://stackoverflow.com/questions/12435211/threading-timer-repeat-function-every-n-seconds
 class RunInterval(threading.Thread):
 	def __init__(self, callback, interval = 1):
@@ -223,6 +273,7 @@ class RunInterval(threading.Thread):
 				log.error(f"{e}")
 				pass
 
+# See SignalContainer in CadenceOS
 class SignalContainer():
 	def __init__(self, value: float):
 		self.value = value
@@ -237,9 +288,8 @@ class SignalContainer():
 	def reset(self):
 		self.value = self.default
 
+# See Slider in CadenceOS
 class Slider():
-	# signal, rate, min, max, rateRate, strictMinMax, quantize, name, getRate, setRate, sliderExp, sliderSCurve, doToast, rateToast, valueText, hardMin, hardMax, displayPrecision, displayNumber, unit, notifySoundRelative, htmlId
-
 	def __init__(self, default: float, rateDefault: float, rateRate: float, sliderExp: bool, sliderSCurve: bool, min: float, max: float, strictMinMax: bool):
 		self.signal = SignalContainer(default)
 		self.rate = SignalContainer(rateDefault)
@@ -378,6 +428,7 @@ class Slider():
 		else:
 			self.rate.set(n / rateRate)
 
+# See CombinedSlider in CadenceOS
 class CombinedSlider():
 	def __init__(self, sliders: list[Slider]):
 		self.sliders = sliders
@@ -414,6 +465,7 @@ class CombinedSlider():
 		for slider in self.sliders:
 			slider.decreaseRate()
 
+# See PanSlider in CadenceOS
 class PanSlider(Slider):
 	def __init__(self, default: float, rateDefault: float, rateRate: float, sliderExp: bool, sliderSCurve: bool, min: float, max: float, strictMinMax: bool, zoom):
 		super().__init__(default, rateDefault, rateRate, sliderExp, sliderSCurve, min, max, strictMinMax)
@@ -421,6 +473,8 @@ class PanSlider(Slider):
 	def getRate(self) -> float:
 		return self.rate.get() / self.zoom()
 
+# Represents either a single device or a pair of two devices (where the second one is bluetooth connected to the first one)
+# Isn't visible to NVDA, see CadenceDisplayDriver
 class CadenceDeviceDriver(HidBrailleDriver):
 	name = "CadenceDisplayDriver"
 	description = _("Cadence HID Braille Display")
@@ -440,43 +494,66 @@ class CadenceDeviceDriver(HidBrailleDriver):
 
 	def __init__(self, port, displayDriver, devIndex):
 		super().__init__(port)
+		# save properties
 		self.displayDriver = displayDriver
 		self.devIndex = devIndex
 		log.info(f"########## CADENCE DEVICE {port} {self._dev}")
 
-		self.isTop = False
-		self.isTall = False
-		# for i in self._inputButtonCapsByDataIndex :
-		# 	log.info(f"# {i} / {self._inputButtonCapsByDataIndex[i]}")
+		# detect left or right
+		# TODO detect this on bluetooth
+		self.isRight = "product" in port.deviceInfo and port.deviceInfo["product"] == "Cadence-R"
 
+		# auto-select whether device is flipped based on whether another device is currently in non-flipped position
+		currentPositionsOccupied = [device.getPosition(side) for device in self.displayDriver.devices for side in device.getSides()]
+		self.isFlipped: dict[DevSide, bool] = {}
+		for side in self.getSides():
+			self.isFlipped[side] = False
+			unflippedPos = self.getPosition(side)
+			if unflippedPos in currentPositionsOccupied:
+				self.isFlipped[side] = True
+
+	# received button press (called by superclass)
 	def _hidOnReceive(self, data: bytes):
 		super()._hidOnReceive(data)
 		self.displayDriver._hidOnReceive(data, self.devIndex)
+
+	# handle button press
 	def _handleKeyRelease(self):
+		# TODO stop single-handed mode when there are multiple devices connected separately
 		if not self.displayDriver.displayingImage:
+			# handle button press as a keyboard input
 			super()._handleKeyRelease()
-	
+
+	# is this actually two devices where the second one is connected to the first one through bluetooth
 	def isTwoDevices(self):
 		return self.numCols > 12
 	
-	def getPostion(self, side: DevSide) -> DevPosition:
+	# get list of device sides (left or right, or both if the second one is connected to the first one through bluetooth)
+	def getSides(self) -> list[DevSide]:
+		if self.isTwoDevices():
+			# TODO Is right, left possible?
+			return [DevSide.Left, DevSide.Right]
+		elif self.isRight:
+			return [DevSide.Right]
+		else:
+			return [DevSide.Left]
+	
+	# get position of device
+	def getPosition(self, side: DevSide) -> DevPosition:
+		flipped = self.isFlipped[side]
 		if side == DevSide.Left:
-			if self.isTop:
+			if flipped:
 				return DevPosition.TopRight
 			else:
 				return DevPosition.BottomLeft
 		else:
-			if self.isTall:
-				if self.isTop:
-					return DevPosition.BottomRight
-				else:
-					return DevPosition.TopLeft
+			if flipped:
+				return DevPosition.TopLeft
 			else:
-				if self.isTop:
-					return DevPosition.TopLeft
-				else:
-					return DevPosition.BottomRight
+				return DevPosition.BottomRight
 
+# A driver for multiple devices connected simultaneously
+# This is the driver than NVDA sees, but actual communication with the device is delegated to CadenceDeviceDriver
 class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 	name = "CadenceDisplayDriver"
 	# Translators: The name of a series of braille displays.
@@ -484,17 +561,18 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 	isThreadSafe = True
 	supportsAutomaticDetection = True
 
-	displayingImage = False
-	lastDisplayedNonImage = None
-	imageTimer = None
+	displayingImage: bool
+	lastDisplayedNonImage: list[int] | None
+	imageTimer: RunInterval | None
 
-	lastFitWidth = -1
-	lastFitHeight = -1
-	prevKeysDown = []
-	liveKeys = []
-	composedKeys = []
+	lastFitWidth: int
+	lastFitHeight: int
+	
+	prevKeysDown: list[tuple[MiniKey, tuple[int, DevSide]]]
+	liveKeys: list[tuple[MiniKey, tuple[int, DevSide]]]
+	composedKeys: list[tuple[MiniKey, tuple[int, DevSide]]]
 
-	devices: list[CadenceDeviceDriver] = []
+	devices: list[CadenceDeviceDriver]
 
 	@classmethod
 	def registerAutomaticDetection(cls, driverRegistrar: bdDetect.DriverRegistrar):
@@ -511,14 +589,25 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 
 	def __init__(self, port):
 		super().__init__()
-
+		# initialize properties
+		self.displayingImage = False
+		self.lastDisplayedNonImage = None
+		self.imageTimer = None
+		self.lastFitWidth = -1
+		self.lastFitHeight = -1
+		self.prevKeysDown = []
+		self.liveKeys = []
+		self.composedKeys = []
 		self.devices = []
+
+		# check for USB devices
 		for devMatch in self._getTryPorts("usb"):
 			if devMatch.type != bdDetect.DeviceType.HID:
 				continue
 			device = CadenceDeviceDriver(devMatch, self, len(self.devices))
 			self.devices.append(device)
 		
+		# if no USB devices, check for bluetooth devices
 		# TODO figure out a way to determine which usb and bluetooth connections are the same device in case we want to connect to a mix of USB and bluetooth devices
 		if len(self.devices) == 0:
 			for devMatch in self._getTryPorts("bluetooth"):
@@ -527,13 +616,16 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 				device = CadenceDeviceDriver(devMatch, self, len(self.devices))
 				self.devices.append(device)
 		
+		# if no devices, error
 		if len(self.devices) == 0:
 			raise RuntimeError("no cadence devices")
 
 		log.info(f"########################## cadence driver initialized {port} {self.devices}")
 
+		# initialize screen size
 		self.updateScreenSize()
 
+		# initialize more properties
 		self.zoomX = Slider(defaultZoom,
 			defaultZoomRate,
 			zoomRateRate,
@@ -580,7 +672,8 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 			True)
 		self.bwReversed = False
 		self.colorMode = 0
-		
+	
+	# toggle between text and image mode
 	def doToggleImage(self):
 		self.displayingImage = not self.displayingImage
 		if self.displayingImage:
@@ -589,11 +682,12 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 				self.imageTimer = RunInterval(self.displayImage, 0.5)
 				self.imageTimer.start()
 		else:
-			self.restoreFromImage()
+			self.restoreNonImage()
 			if self.imageTimer is not None:
 				self.imageTimer.cancel()
 				self.imageTimer = None
 	
+	# draw image mode (screencapture of current navigator object)
 	def displayImage(self, resetView = False):
 		obj = api.getNavigatorObject()
 		if obj is None:
@@ -629,10 +723,12 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		cells = imageToCells(boolImage)
 		self.display(cells, True)
 	
-	def restoreFromImage(self):
+	# restore text mode by drawing text
+	def restoreNonImage(self):
 		if self.lastDisplayedNonImage is not None:
 			self.display(self.lastDisplayedNonImage)
 
+	# crop a screen to a device position
 	def getImage(self, fullImage: list[list[bool]], pos: DevPosition) -> list[list[bool]]:
 		xOffset = (24 if (pos == DevPosition.TopRight or pos == DevPosition.BottomRight) else 0) - self.offsetCols * 2
 		yOffset = (16 if (pos == DevPosition.BottomLeft or pos == DevPosition.BottomRight) else 0) - self.offsetRows * 4
@@ -641,31 +737,27 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 			image = flipImage(image)
 		return image
 
-	def display(self, cells: List[int], isImage = False):
-		# log.info(f"display {isImage} {self.displayingImage} {cells}")
+	# display on device (called by NVDA or manually in some cases)
+	def display(self, cells: list[int], isImage = False):
 		if not isImage:
 			self.lastDisplayedNonImage = cells
 		if isImage == self.displayingImage:
+			if len(cells) < self.numRows * self.numCols:
+				cells = [(cells[i] if i < len(cells) else 0) for i in self.numRows * self.numCols]
+			cells = cells[:(self.numRows * self.numCols)]
 			fullImage = cellsToImage(cells, self.numRows)
-			log.info(f"orig {len(fullImage[0])}x{len(fullImage)}")
-			log.info(debugImage(fullImage))
 			for device in self.devices:
-				leftDevPos = device.getPostion(DevSide.Left)
+				sides = device.getSides()
+				leftDevPos = device.getPosition(sides[0])
 				image = self.getImage(fullImage, leftDevPos)
-				log.info(f"left {len(image[0])}x{len(image)}")
-				log.info(debugImage(image))
-				if device.isTwoDevices():
-					rightDevPos = device.getPostion(DevSide.Right)
+				if len(sides) > 1:
+					rightDevPos = device.getPosition(sides[1])
 					rightSideImage = self.getImage(fullImage, rightDevPos)
-					log.info(f"right {len(rightSideImage[0])}x{len(rightSideImage)}")
 					image = joinImagesHorizontally(image, rightSideImage)
-					log.info(f"combined {len(image[0])}x{len(image)}")
-				log.info(debugImage(image))
 				devCells = imageToCells(image)
-				log.info(f"cells {devCells}")
-				log.info(debugImage(cellsToImage(devCells, self.numRows)))
 				device.display(devCells)
 
+	# cleanup on exit (called by NVDA)
 	def terminate(self):
 		super().terminate()
 		for device in self.devices:
@@ -674,10 +766,12 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 			self.imageTimer.cancel()
 			self.imageTimer = None
 	
+	# helper functions for screen size
 	def getDisplayWidth(self):
 		return self.numCols * 2
 	def getDisplayHeight(self):
 		return self.numRows * 4
+	# fit image to screen
 	def getFitZoom(self, toDrawWidth, toDrawHeight):
 		# calculate zoom to fit image in screen while keeping aspect ratio
 		if (toDrawWidth / toDrawHeight > self.getDisplayWidth() / self.getDisplayHeight()):
@@ -685,6 +779,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 			return [2, toDrawHeight / (toDrawWidth * (self.getDisplayHeight() / self.getDisplayWidth())) * 2]
 		else:
 			return [toDrawWidth / (toDrawHeight * (self.getDisplayWidth() / self.getDisplayHeight())) * 2, 2]
+	# reset image view
 	def reset(self, toDrawWidth, toDrawHeight):
 		self.centerX.set(0.5)
 		self.centerY.set(0.5)
@@ -696,7 +791,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		self.bwThreshold.reset()
 		self.colorMode = 0
 		self.bwReversed = False
-		# log.info(f"################## reset {self.centerX.get()} {self.centerY.get()} / {self.zoomX.get()} {self.zoomY.get()} / {toDrawWidth} {toDrawHeight}")
+	# helper functions for image mode - see NavigatibleCanvas in CadenceOS
 	def virtualXToScreen(self, actualX, graphWidth):
 		return (actualX - self.centerX.get()) * self.zoomX.get() * ((graphWidth) / 2) + (graphWidth) / 2
 	def virtualYToScreen(self, actualY, graphHeight):
@@ -705,7 +800,15 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		return ((graphX) - ((graphWidth) / 2)) / ((graphWidth) / 2) / self.zoomX.get() + self.centerX.get()
 	def screenYToVirtual(self, graphY, graphHeight):
 		return ((graphHeight - graphY) - ((graphHeight) / 2)) / ((graphHeight) / 2) / self.zoomY.get() + self.centerY.get()
+
+	# flip keys if necessary due to device position
+	def rotateKey(self, key: MiniKey, pos: DevPosition) -> MiniKey:
+		if pos == DevPosition.TopLeft or pos == DevPosition.TopRight:
+			if key in flippedKeys:
+				return flippedKeys[key]
+		return key
 	
+	# receive button press from device (called by CadenceDeviceDriver)
 	def _hidOnReceive(self, data: bytes, devIndex: int):
 		# log.info("# data: " + " ".join([f"{b:0>8b}" for b in data]))
 		if len(data) == 5 or len(data) == 7:
@@ -714,16 +817,16 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 				for bitI in range(8):
 					if byte & (1 << bitI):
 						index = byteI * 8 + bitI
-						# log.info(f"## key {index}")
-						devSide = DevSide.Left
+						log.info(f"## key {index}")
+						device = self.devices[devIndex]
+						devSides = device.getSides()
+						devSide = devSides[0]
 						if len(data) == 7:
-							if index > 16 and index <= 24:
-								index -= 8
-								devSide = DevSide.Right
-							elif index > 36:
-								index -= 16
-								devSide = DevSide.Right
+							if index in rightKeys:
+								index = rightKeys[index]
+								devSide = devSides[1]
 						key = MiniKey(index)
+						key = self.rotateKey(key, self.getDevPosition((devIndex, devSide)))
 						if len(data) == 5:
 							if key == MiniKey.Dot4:
 								key = MiniKey.Dot1
@@ -759,6 +862,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 			
 			self.prevKeysDown = keysDown
 	
+	# pan image
 	def pan(self, direction: Direction):
 		log.info("pan")
 		if direction == Direction.Up:
@@ -770,7 +874,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		elif direction == Direction.Right:
 			self.centerX.increase()
 		self.displayImage()
-	
+	# zoom image
 	def zoom(self, zoomIn: bool):
 		log.info("zoom")
 		if zoomIn:
@@ -778,7 +882,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		else:
 			self.combinedZoom.decrease()
 		self.displayImage()
-	
+	# change image threshold
 	def changeThreshold(self, increase: bool):
 		log.info("changeThreshold")
 		if increase:
@@ -786,43 +890,43 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		else:
 			self.bwThreshold.decrease()
 		self.displayImage()
-	
+	# reverse image threshold
 	def reverseThreshold(self):
 		log.info("reverse threshold")
 		self.bwReversed = not self.bwReversed
 		self.displayImage()
-	
+	# cycle image color mode
 	def cycleColorMode(self):
 		log.info("cycle color mode")
 		self.colorMode = (self.colorMode + 1) % 4
 		self.displayImage()
-	
+	# reset image view
 	def resetAction(self):
 		log.info("reset")
 		self.reset()
 		self.displayImage()
-
+	# change image pan rate
 	def changePanRate(self, increase):
 		log.info(f"{'increase' if increase else 'decrease'} pan rate")
 		if increase:
 			self.combinedPan.increaseRate()
 		else:
 			self.combinedPan.decreaseRate()
-
+	# change image zoom rate
 	def changeZoomRate(self, increase):
 		log.info(f"{'increase' if increase else 'decrease'} zoom rate")
 		if increase:
 			self.combinedZoom.increaseRate()
 		else:
 			self.combinedZoom.decreaseRate()
-
+	# change image threshold rate
 	def changeThresholdRate(self, increase):
 		log.info(f"{'increase' if increase else 'decrease'} threshold rate")
 		if increase:
 			self.bwThreshold.increaseRate()
 		else:
 			self.bwThreshold.decreaseRate()
-
+	# pan image to edge
 	def panEdgeUp(self):
 		virtualHeight = self.screenYToVirtual(0, 1) - self.screenYToVirtual(1, 1)
 		self.centerY.set(1 - virtualHeight / 2)
@@ -840,12 +944,12 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		self.centerX.set(1 - virtualWidth / 2)
 		self.displayImage()
 
+	# update screen size based on the current positions of connected devices
 	def updateScreenSize(self):
 		devPositions: list[DevPosition] = []
 		for device in self.devices:
-			devPositions.append(device.getPostion(DevSide.Left))
-			if device.isTwoDevices():
-				devPositions.append(device.getPostion(DevSide.Right))
+			for side in device.getSides():
+				devPositions.append(device.getPosition(side))
 			
 		self.offsetCols = 0
 		self.offsetRows = 0
@@ -864,11 +968,33 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 				self.offsetRows = 4
 			self.numRows = 4
 
+	# get current device position for a device
 	def getDevPosition(self, device: tuple[int, DevSide]) -> DevPosition:
-		return self.devices[device[0]].getPostion(device[1])
+		return self.devices[device[0]].getPosition(device[1])
 
-	def handleKeys(self, liveKeys, composedKeys):
-		log.info(f"## {self.liveKeys} {self.composedKeys}")
+	# move current device position by flipping it
+	def flipScreen(self, deviceID: tuple[int, DevSide], flipped: bool):
+		device = self.devices[deviceID[0]]
+		device.isFlipped[deviceID[1]] = flipped
+		newPosition = device.getPosition(deviceID[1])
+		for otherDevice in self.devices:
+			if otherDevice != device:
+				for otherDeviceSide in otherDevice.getSides():
+					otherDevicePos = otherDevice.getPosition(otherDeviceSide)
+					if otherDevicePos == newPosition:
+						otherDevice.isFlipped[otherDeviceSide] = not flipped
+		self.updateScreenSize()
+		if self.displayingImage:
+			self.displayImage(True)
+		else:
+			self.restoreNonImage()
+
+	# handle keys
+	def handleKeys(self, liveKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], composedKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]]):
+		log.info(f"## {liveKeysWithPosition} {composedKeysWithPosition}")
+
+		liveKeys = [key[0] for key in liveKeysWithPosition]
+		composedKeys = [key[0] for key in composedKeysWithPosition]
 
 		if self.displayingImage:
 			if len(liveKeys) == 1:
@@ -925,9 +1051,16 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 					self.resetAction()
 	
 		if len(liveKeys) == 1:
-			if MiniKey.Row4 in liveKeys:
+			if MiniKey.Row3 in liveKeys:
 				self.doToggleImage()
+		
+		if len(composedKeys) == 1:
+			if MiniKey.Row1 in composedKeys or MiniKey.Row4 in composedKeys:
+				position = self.getDevPosition(composedKeysWithPosition[0][1])
+				isCurrentlyFlipped = position == DevPosition.TopLeft or position == DevPosition.TopRight
+				self.flipScreen(composedKeysWithPosition[0][1], (MiniKey.Row4 in composedKeys and not isCurrentlyFlipped) or (MiniKey.Row1 in composedKeys and isCurrentlyFlipped))
 	
+	# map of device buttons to keyboard keys for non-image mode
 	gestureMap = inputCore.GlobalGestureMap(
 		{
 			"globalCommands.GlobalCommands": {
@@ -978,4 +1111,5 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		},
 	)
 
+# export CadenceDisplayDriver
 BrailleDisplayDriver = CadenceDisplayDriver
