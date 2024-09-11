@@ -14,6 +14,7 @@ from enum import Enum
 import math
 import braille
 import inputCore
+import itertools
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
@@ -473,6 +474,18 @@ class PanSlider(Slider):
 	def getRate(self) -> float:
 		return self.rate.get() / self.zoom()
 
+def getDevicePosition(side: DevSide, flipped: bool) -> DevPosition:
+	if side == DevSide.Left:
+		if flipped:
+			return DevPosition.TopRight
+		else:
+			return DevPosition.BottomLeft
+	else:
+		if flipped:
+			return DevPosition.TopLeft
+		else:
+			return DevPosition.BottomRight
+
 # Represents either a single device or a pair of two devices (where the second one is bluetooth connected to the first one)
 # Isn't visible to NVDA, see CadenceDisplayDriver
 class CadenceDeviceDriver(HidBrailleDriver):
@@ -541,16 +554,7 @@ class CadenceDeviceDriver(HidBrailleDriver):
 	# get position of device
 	def getPosition(self, side: DevSide) -> DevPosition:
 		flipped = self.isFlipped[side]
-		if side == DevSide.Left:
-			if flipped:
-				return DevPosition.TopRight
-			else:
-				return DevPosition.BottomLeft
-		else:
-			if flipped:
-				return DevPosition.TopLeft
-			else:
-				return DevPosition.BottomRight
+		return getDevicePosition(side, flipped)
 
 # A driver for multiple devices connected simultaneously
 # This is the driver than NVDA sees, but actual communication with the device is delegated to CadenceDeviceDriver
@@ -971,6 +975,15 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 	# get current device position for a device
 	def getDevPosition(self, device: tuple[int, DevSide]) -> DevPosition:
 		return self.devices[device[0]].getPosition(device[1])
+	
+	# run after changing device positions to update screens
+	def afterDevicePositionsChanged(self):
+		self.updateScreenSize()
+		if self.displayingImage:
+			self.displayImage(True)
+		else:
+			self.restoreNonImage()
+
 
 	# move current device position by flipping it
 	def flipScreen(self, deviceID: tuple[int, DevSide], flipped: bool):
@@ -983,11 +996,60 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 					otherDevicePos = otherDevice.getPosition(otherDeviceSide)
 					if otherDevicePos == newPosition:
 						otherDevice.isFlipped[otherDeviceSide] = not flipped
-		self.updateScreenSize()
-		if self.displayingImage:
-			self.displayImage(True)
+		self.afterDevicePositionsChanged()
+	
+	# cycle through possible device positions
+	def cycleDevPositions(self):
+		# get all individual devices
+		deviceIds = [(devIndex, side) for devIndex, device in enumerate(self.devices) for side in device.getSides()]
+		# get number of lefts and rights
+		numLefts = len([(devIndex, side) for devIndex, side in deviceIds if side == DevSide.Left])
+		numRights = len([(devIndex, side) for devIndex, side in deviceIds if side == DevSide.Right])
+		# determine form factor(s)
+		if numLefts >= 2 and numRights >= 2:
+			forms = [set([DevPosition.BottomLeft, DevPosition.BottomRight, DevPosition.TopLeft, DevPosition.TopRight])]
+		elif numLefts >= 1 and numRights >= 1:
+			forms = [set([DevPosition.BottomLeft, DevPosition.BottomRight]), set([DevPosition.BottomLeft, DevPosition.TopLeft])]
+		elif numLefts >= 1:
+			forms = [set([DevPosition.BottomLeft])]
 		else:
-			self.restoreNonImage()
+			forms = [set([DevPosition.BottomRight])]
+		# find all possible options
+		options: list[list[bool]] = []
+		for positions in itertools.product([True, False], repeat=len(deviceIds)):
+			if numLefts > 2 and numRights > 2:
+				# don't combine two tall duets into a quartet
+				devIndexFlipped = {}
+				isTall = False
+				for i in range(len(deviceIds)):
+					devIndex = deviceIds[i][0]
+					flipped = positions[i]
+					if devIndex in devIndexFlipped and devIndexFlipped[devIndex] != flipped:
+						isTall = True
+						break
+					devIndexFlipped[devIndex] = flipped
+				if isTall:
+					continue
+			
+			currentForm = set([getDevicePosition(deviceIds[i][1], positions[i]) for i in range(len(deviceIds))])
+			if currentForm in forms:
+				options.append(list(positions))
+		# get current device positions
+		currentPositions = [self.devices[devIndex].isFlipped[side] for devIndex, side in deviceIds]
+		# find index of current device position in options
+		currentPositionI = -1
+		if currentPositions in options:
+			currentPositionI = options.index(currentPositions)
+		log.info(f"{deviceIds}, {numLefts}, {numRights}, {forms}, {options}, {currentPositions}, {currentPositionI}")
+		# get new device positions
+		newPositions = options[0] if currentPositionI + 1 >= len(options) else options[currentPositionI + 1]
+		# set new device positions
+		for i in range(len(deviceIds)):
+			devIndex, side = deviceIds[i]
+			flipped = newPositions[i]
+			self.devices[devIndex].isFlipped[side] = flipped
+		# update
+		self.afterDevicePositionsChanged()
 
 	# handle keys
 	def handleKeys(self, liveKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], composedKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]]):
