@@ -675,11 +675,6 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		bottomRightX = self.screenXToVirtual(self.getDisplayWidth(), self.getDisplayWidth())
 		bottomRightY = -self.screenYToVirtual(self.getDisplayHeight(), self.getDisplayHeight())
 
-		log.info(f"LOC {left} {top} {width} {height}")
-		log.info(f"VIRTUAL {topLeftX} {topLeftY} {bottomRightX - topLeftX} {bottomRightY - topLeftY}")
-		log.info(f"VIEW {self.centerX.get()} {self.centerY.get()} {self.zoomX.get()} {self.zoomY.get()}")
-		log.info(f"ASPECT {(bottomRightX - topLeftX) / (bottomRightY - topLeftY)} {self.getDisplayWidth() / self.getDisplayHeight()} {width / height}")
-
 		bitmapHolder = ScreenBitmap(screenWidth, screenHeight)
 		# TODO don't round here
 		bitmapBuffer = bitmapHolder.captureImage(round(topLeftX), round(topLeftY), round(bottomRightX - topLeftX), round(bottomRightY - topLeftY))
@@ -735,22 +730,13 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		return self.numCols * 2
 	def getDisplayHeight(self):
 		return self.numRows * 4
-	# fit image to screen
-	def getFitZoom(self, toDrawWidth, toDrawHeight):
-		# calculate zoom to fit image in screen while keeping aspect ratio
-		if (toDrawWidth / toDrawHeight > self.getDisplayWidth() / self.getDisplayHeight()):
-			# image wider than screen
-			return [2, toDrawHeight / (toDrawWidth * (self.getDisplayHeight() / self.getDisplayWidth())) * 2]
-		else:
-			return [toDrawWidth / (toDrawHeight * (self.getDisplayWidth() / self.getDisplayHeight())) * 2, 2]
 	# reset image view
 	def reset(self, left, top, toDrawWidth, toDrawHeight):
 		self.centerX.set(left + toDrawWidth / 2)
 		self.centerY.set(-(top + toDrawHeight / 2))
-		fitZoom = self.getFitZoom(toDrawWidth, toDrawHeight)
-		# 2 zoom: 1 virtual = this.getDisplayWidth() dev pixels
-		# N zoom: toDrawWidth virtual = this.getDisplayWidth dev pixels
-		zoom = min(2 / toDrawWidth, 2 / toDrawHeight * self.getDisplayHeight() / self.getDisplayWidth())
+		fullZoom = min(2 / toDrawWidth, 2 / toDrawHeight * self.getDisplayHeight() / self.getDisplayWidth())
+		halfZoom = max(1 / toDrawWidth, 1 / toDrawHeight * self.getDisplayHeight() / self.getDisplayWidth())
+		zoom = max(halfZoom, fullZoom)
 		self.zoomX.set(zoom)
 		self.zoomY.set(zoom * self.getDisplayWidth() / self.getDisplayHeight())
 		self.lastLeft = left
