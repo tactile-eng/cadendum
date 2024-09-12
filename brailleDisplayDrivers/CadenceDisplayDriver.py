@@ -100,7 +100,6 @@ class Direction(Enum):
 	Right = 3
 
 # view & navigation constants
-defaultZoom = 1
 defaultPanRate = 2
 panRateRate = 1.5
 defaultZoomRate = 1.25
@@ -587,7 +586,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		screenWidth, screenHeight = getScreenResolution()
 
 		# initialize more properties
-		self.zoomX = Slider(defaultZoom,
+		self.zoomX = Slider(-1,
 			defaultZoomRate,
 			zoomRateRate,
 			True,
@@ -595,7 +594,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 			0.00000000001,
 			1000000000,
 			True)
-		self.zoomY = Slider(defaultZoom,
+		self.zoomY = Slider(-1,
 			defaultZoomRate,
 			zoomRateRate,
 			True,
@@ -638,7 +637,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 	def doToggleImage(self):
 		self.displayingImage = not self.displayingImage
 		if self.displayingImage:
-			self.displayImage(True)
+			self.displayImage()
 			if self.imageTimer is None:
 				self.imageTimer = RunInterval(self.displayImage, 0.5)
 				self.imageTimer.start()
@@ -734,11 +733,12 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 	def reset(self, left, top, toDrawWidth, toDrawHeight):
 		self.centerX.set(left + toDrawWidth / 2)
 		self.centerY.set(-(top + toDrawHeight / 2))
-		fullZoom = min(2 / toDrawWidth, 2 / toDrawHeight * self.getDisplayHeight() / self.getDisplayWidth())
-		halfZoom = max(1 / toDrawWidth, 1 / toDrawHeight * self.getDisplayHeight() / self.getDisplayWidth())
-		zoom = max(halfZoom, fullZoom)
-		self.zoomX.set(zoom)
-		self.zoomY.set(zoom * self.getDisplayWidth() / self.getDisplayHeight())
+		if (self.zoomX.get() < 0 or self.zoomY.get() < 0):
+			fullZoom = min(2 / toDrawWidth, 2 / toDrawHeight * self.getDisplayHeight() / self.getDisplayWidth())
+			halfZoom = max(1 / toDrawWidth, 1 / toDrawHeight * self.getDisplayHeight() / self.getDisplayWidth())
+			zoom = max(halfZoom, fullZoom)
+			self.zoomX.set(zoom)
+			self.zoomY.set(zoom * self.getDisplayWidth() / self.getDisplayHeight())
 		self.lastLeft = left
 		self.lastTop = top
 		self.lastFitWidth = toDrawWidth
@@ -858,6 +858,8 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		self.bwThreshold.reset()
 		self.colorMode = 0
 		self.bwReversed = True
+		self.zoomX.set(-1)
+		self.zoomY.set(-1)
 		self.displayImage(True)
 	# change image pan rate
 	def changePanRate(self, increase):
