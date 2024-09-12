@@ -108,62 +108,13 @@ zoomRateRate = 1.5
 bwThresholdOutOf = 100
 defaultBwThresholdRate = 7
 
-class ScreenBitmapResized(ScreenBitmap):
-	def __init__(self, width, height):
-		super().__init__(width, height)
-
-	def captureImage(self, x, y, w, h, x2, y2, w2, h2):
-		"""
-		Captures the part of the screen starting at x,y and extends by w (width) and h (height), and stretches/shrinks it to fit in to the object's bitmap size.
-		"""
-		tempDC = gdi32.CreateCompatibleDC(self._screenDC)
-		tempMemBitmap = gdi32.CreateCompatibleBitmap(self._screenDC, w, h)
-		tempOldBitmap = gdi32.SelectObject(tempDC, tempMemBitmap)
-
-		# Copy the requested content from the screen in to our memory device context, stretching/shrinking its size to fit.
-		gdi32.StretchBlt(
-			tempDC,
-			0,
-			0,
-			w,
-			h,
-			self._screenDC,
-			x,
-			y,
-			w,
-			h,
-			winGDI.SRCCOPY,
-		)
-		gdi32.StretchBlt(
-			self._memDC,
-			0,
-			0,
-			self.width,
-			self.height,
-			tempDC,
-			x2,
-			y2,
-			w2,
-			h2,
-			winGDI.SRCCOPY,
-		)
-		# Fetch the pixels from our memory bitmap and store them in a buffer to be returned
-		buffer = (winGDI.RGBQUAD * self.width * self.height)()
-		gdi32.GetDIBits(
-			self._memDC,
-			self._memBitmap,
-			0,
-			self.height,
-			buffer,
-			ctypes.byref(self._bmInfo),
-			winGDI.DIB_RGB_COLORS,
-		)
-
-		gdi32.SelectObject(tempDC, tempOldBitmap)
-		gdi32.DeleteObject(tempMemBitmap)
-		gdi32.DeleteDC(tempDC)
-
-		return buffer
+def getScreenResolution():
+	screen = user32.GetDC(0)
+	width = gdi32.GetDeviceCaps(screen, 8)  # HORZRES
+	height = gdi32.GetDeviceCaps(screen, 10)  # VERTRES
+	log.info(f"########## SCREEN RES {width}x{height}")
+	user32.ReleaseDC(0, screen)
+	return (width, height)
 
 # is driver enabled?
 def isSupportEnabled() -> bool:
@@ -569,6 +520,8 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 	lastDisplayedNonImage: list[int] | None
 	imageTimer: RunInterval | None
 
+	lastLeft: int
+	lastTop: int
 	lastFitWidth: int
 	lastFitHeight: int
 	
@@ -597,6 +550,8 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		self.displayingImage = False
 		self.lastDisplayedNonImage = None
 		self.imageTimer = None
+		self.lastLeft = -1
+		self.lastTop = -1
 		self.lastFitWidth = -1
 		self.lastFitHeight = -1
 		self.prevKeysDown = []
@@ -629,6 +584,8 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		# initialize screen size
 		self.updateScreenSize()
 
+		screenWidth, screenHeight = getScreenResolution()
+
 		# initialize more properties
 		self.zoomX = Slider(defaultZoom,
 			defaultZoomRate,
@@ -653,7 +610,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 			False,
 			False,
 			0,
-			1,
+			screenWidth,
 			True,
 			lambda: self.zoomX.get() * 24 / 2)
 		self.centerY = PanSlider(0,
@@ -661,8 +618,8 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 			panRateRate,
 			False,
 			False,
+			-screenHeight,
 			0,
-			1,
 			True,
 			lambda: self.zoomX.get() * 16 / 2)
 		self.combinedPan = CombinedSlider([self.centerX, self.centerY])
@@ -708,21 +665,24 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		if width <= 0 or height <= 0:
 			log.error("invalid object location")
 			return
-		if resetView or self.lastFitWidth != width or self.lastFitHeight != height:
-			self.reset(width, height)
+		if resetView or left != self.lastLeft or top != self.lastTop or self.lastFitWidth != width or self.lastFitHeight != height:
+			self.reset(left, top, width, height)
 		screenWidth = self.getDisplayWidth()
 		screenHeight = self.getDisplayHeight()
 
-		topLeftX = self.screenXToVirtual(0, self.getDisplayWidth()) * width
-		topLeftY = height - self.screenYToVirtual(0, self.getDisplayHeight()) * height
-		bottomRightX = self.screenXToVirtual(self.getDisplayWidth(), self.getDisplayWidth()) * width
-		bottomRightY = height - self.screenYToVirtual(self.getDisplayHeight(), self.getDisplayHeight()) * height
+		topLeftX = self.screenXToVirtual(0, self.getDisplayWidth())
+		topLeftY = -self.screenYToVirtual(0, self.getDisplayHeight())
+		bottomRightX = self.screenXToVirtual(self.getDisplayWidth(), self.getDisplayWidth())
+		bottomRightY = -self.screenYToVirtual(self.getDisplayHeight(), self.getDisplayHeight())
 
-		# log.info(f"{topLeftX} {topLeftY} {bottomRightX} {bottomRightY}")
+		log.info(f"LOC {left} {top} {width} {height}")
+		log.info(f"VIRTUAL {topLeftX} {topLeftY} {bottomRightX - topLeftX} {bottomRightY - topLeftY}")
+		log.info(f"VIEW {self.centerX.get()} {self.centerY.get()} {self.zoomX.get()} {self.zoomY.get()}")
+		log.info(f"ASPECT {(bottomRightX - topLeftX) / (bottomRightY - topLeftY)} {self.getDisplayWidth() / self.getDisplayHeight()} {width / height}")
 
-		bitmapHolder = ScreenBitmapResized(screenWidth, screenHeight)
+		bitmapHolder = ScreenBitmap(screenWidth, screenHeight)
 		# TODO don't round here
-		bitmapBuffer = bitmapHolder.captureImage(left, top, width, height, round(topLeftX), round(topLeftY), round(bottomRightX - topLeftX), round(bottomRightY - topLeftY))
+		bitmapBuffer = bitmapHolder.captureImage(round(topLeftX), round(topLeftY), round(bottomRightX - topLeftX), round(bottomRightY - topLeftY))
 		boolImage = bitmapToImage(bitmapBuffer, screenWidth, screenHeight, self.bwThreshold.get(), self.bwReversed, self.colorMode)
 		cells = imageToCells(boolImage)
 		self.display(cells, True)
@@ -784,12 +744,17 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		else:
 			return [toDrawWidth / (toDrawHeight * (self.getDisplayWidth() / self.getDisplayHeight())) * 2, 2]
 	# reset image view
-	def reset(self, toDrawWidth, toDrawHeight):
-		self.centerX.set(0.5)
-		self.centerY.set(0.5)
+	def reset(self, left, top, toDrawWidth, toDrawHeight):
+		self.centerX.set(left + toDrawWidth / 2)
+		self.centerY.set(-(top + toDrawHeight / 2))
 		fitZoom = self.getFitZoom(toDrawWidth, toDrawHeight)
-		self.zoomX.set(fitZoom[0])
-		self.zoomY.set(fitZoom[1])
+		# 2 zoom: 1 virtual = this.getDisplayWidth() dev pixels
+		# N zoom: toDrawWidth virtual = this.getDisplayWidth dev pixels
+		zoom = min(2 / toDrawWidth, 2 / toDrawHeight * self.getDisplayHeight() / self.getDisplayWidth())
+		self.zoomX.set(zoom)
+		self.zoomY.set(zoom * self.getDisplayWidth() / self.getDisplayHeight())
+		self.lastLeft = left
+		self.lastTop = top
 		self.lastFitWidth = toDrawWidth
 		self.lastFitHeight = toDrawHeight
 	# helper functions for image mode - see NavigatibleCanvas in CadenceOS
@@ -904,11 +869,10 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 	# reset image view
 	def resetAction(self):
 		log.info("reset")
-		self.reset()
 		self.bwThreshold.reset()
 		self.colorMode = 0
 		self.bwReversed = True
-		self.displayImage()
+		self.displayImage(True)
 	# change image pan rate
 	def changePanRate(self, increase):
 		log.info(f"{'increase' if increase else 'decrease'} pan rate")
@@ -1109,7 +1073,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 						self.panEdgeRight()
 			elif len(liveKeys) == 4:
 				# reset - dots1237
-				if MiniKey.Dot1 in liveKeys and MiniKey.Dot2 in liveKeys and MiniKey.Dot3 in liveKeys and MiniKey.Dot4 in liveKeys:
+				if MiniKey.Dot1 in liveKeys and MiniKey.Dot2 in liveKeys and MiniKey.Dot3 in liveKeys and MiniKey.Dot7 in liveKeys:
 					self.resetAction()
 	
 		if len(liveKeys) == 1:
