@@ -674,7 +674,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 			0,
 			bwThresholdOutOf,
 			True)
-		self.bwReversed = False
+		self.bwReversed = True
 		self.colorMode = 0
 	
 	# toggle between text and image mode
@@ -792,9 +792,6 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		self.zoomY.set(fitZoom[1])
 		self.lastFitWidth = toDrawWidth
 		self.lastFitHeight = toDrawHeight
-		self.bwThreshold.reset()
-		self.colorMode = 0
-		self.bwReversed = False
 	# helper functions for image mode - see NavigatibleCanvas in CadenceOS
 	def virtualXToScreen(self, actualX, graphWidth):
 		return (actualX - self.centerX.get()) * self.zoomX.get() * ((graphWidth) / 2) + (graphWidth) / 2
@@ -908,6 +905,9 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 	def resetAction(self):
 		log.info("reset")
 		self.reset()
+		self.bwThreshold.reset()
+		self.colorMode = 0
+		self.bwReversed = True
 		self.displayImage()
 	# change image pan rate
 	def changePanRate(self, increase):
