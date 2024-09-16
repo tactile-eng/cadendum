@@ -15,6 +15,7 @@ import math
 import braille
 import inputCore
 import itertools
+import queueHandler
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
@@ -580,6 +581,10 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 
 		log.info(f"########################## cadence driver initialized {port} {self.devices}")
 
+		for devI, device in enumerate(self.devices):
+			for side in device.getSides():
+				log.info(f"device: {devI} {side} {device.getPosition(side)}")
+
 		# initialize screen size
 		self.updateScreenSize()
 
@@ -649,20 +654,34 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 	
 	# draw image mode (screencapture of current navigator object)
 	def displayImage(self, resetView = False):
+		queueHandler.queueFunction(
+			queueHandler.eventQueue,
+			lambda : self.actuallyDisplayImage(resetView),
+			_immediate=True,
+		)
+	def actuallyDisplayImage(self, resetView = False):
 		obj = api.getNavigatorObject()
 		if obj is None:
+			log.info("no navigator object, switching to focus object")
 			obj = api.getFocusObject()
 			if obj is None:
-				log.error("no navigator object")
+				log.error("no focus object")
+				self.doToggleImage()
 				return
-		location = obj.location
-		if not location:
+		self.prevObj = obj
+		while obj is not None and obj.location is None:
+			log.warn("object has no location, trying parent")
+			obj = obj.parent
+		if obj is None:
 			log.error("no location for object when displaying image")
+			self.doToggleImage()
 			return
+		location = obj.location
 		(left, top, width, height) = location
-#		log.info(f"######## screenshot {left} {top} {width} {height}")
+		log.info(f"######## screenshot {left} {top} {width} {height}")
 		if width <= 0 or height <= 0:
 			log.error("invalid object location")
+			self.doToggleImage()
 			return
 		if resetView or left != self.lastLeft or top != self.lastTop or self.lastFitWidth != width or self.lastFitHeight != height:
 			self.reset(left, top, width, height)
@@ -691,7 +710,9 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		xOffset = (24 if (pos == DevPosition.TopRight or pos == DevPosition.BottomRight) else 0) - self.offsetCols * 2
 		yOffset = (16 if (pos == DevPosition.BottomLeft or pos == DevPosition.BottomRight) else 0) - self.offsetRows * 4
 		image = [[fullImage[y + yOffset][x + xOffset] for x in range(24)] for y in range(16)]
-		if pos == DevPosition.TopLeft or pos == DevPosition.TopRight:
+		flipped = pos == DevPosition.TopLeft or pos == DevPosition.TopRight
+		log.info(f"display {pos} / {xOffset} / {yOffset} / {flipped}")
+		if flipped:
 			image = flipImage(image)
 		return image
 
@@ -700,16 +721,19 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		if not isImage:
 			self.lastDisplayedNonImage = cells
 		if isImage == self.displayingImage:
+			log.info(f"display {len(cells)} {self.numRows} {self.numCols}")
 			if len(cells) < self.numRows * self.numCols:
 				cells = [(cells[i] if i < len(cells) else 0) for i in self.numRows * self.numCols]
 			cells = cells[:(self.numRows * self.numCols)]
 			fullImage = cellsToImage(cells, self.numRows)
-			for device in self.devices:
+			for devI, device in enumerate(self.devices):
 				sides = device.getSides()
 				leftDevPos = device.getPosition(sides[0])
+				log.info(f"left {devI} {leftDevPos}")
 				image = self.getImage(fullImage, leftDevPos)
 				if len(sides) > 1:
 					rightDevPos = device.getPosition(sides[1])
+					log.info(f"right {devI} {rightDevPos}")
 					rightSideImage = self.getImage(fullImage, rightDevPos)
 					image = joinImagesHorizontally(image, rightSideImage)
 				devCells = imageToCells(image)
@@ -939,6 +963,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 
 	# move current device position by flipping it
 	def flipScreen(self, deviceID: tuple[int, DevSide], flipped: bool):
+		log.info(f"flipScreen {deviceID} {flipped}")
 		device = self.devices[deviceID[0]]
 		device.isFlipped[deviceID[1]] = flipped
 		newPosition = device.getPosition(deviceID[1])
