@@ -9,16 +9,19 @@ import math
 import threading
 import ctypes
 import winGDI
-import hwIo.hid
 from enum import Enum
 import math
 import braille
 import inputCore
 import itertools
 import queueHandler
+from bdDetect import HID_USAGE_PAGE_BRAILLE
+from hwIo import hid
+import hidpi
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
+hidDll = ctypes.windll.hid
 
 # device buttons
 class MiniKey(Enum):
@@ -436,6 +439,15 @@ def getDevicePosition(side: DevSide, flipped: bool) -> DevPosition:
 			return DevPosition.TopLeft
 		else:
 			return DevPosition.BottomRight
+		
+class HidFeatureReport(hid.HidOutputReport):
+	_reportType = hidpi.HIDP_REPORT_TYPE.FEATURE
+	
+	def __init__(self, device, reportID=0):
+		super().__init__(device, reportID)
+		self._reportSize = device.caps.FeatureReportByteLength
+		self._reportBuf = ctypes.c_buffer(self._reportSize)
+		self._reportBuf[0] = 0
 
 # Represents either a single device or a pair of two devices (where the second one is bluetooth connected to the first one)
 # Isn't visible to NVDA, see CadenceDisplayDriver
@@ -463,6 +475,17 @@ class CadenceDeviceDriver(HidBrailleDriver):
 		self.devIndex = devIndex
 		log.info(f"########## CADENCE DEVICE {port} {self._dev}")
 
+		self.valueCapsList = (hidpi.HIDP_VALUE_CAPS * self._dev.caps.NumberFeatureValueCaps)()
+		numValueCaps = ctypes.c_long(self._dev.caps.NumberFeatureValueCaps)
+		hid.check_HidP_status(
+			hidDll.HidP_GetValueCaps,
+			hidpi.HIDP_REPORT_TYPE.FEATURE,
+			ctypes.byref(self.valueCapsList),
+			ctypes.byref(numValueCaps),
+			self._dev._pd)
+		
+		self.isOneHanded = not self.isTwoDevices()
+		
 		# detect left or right
 		# TODO detect this on bluetooth
 		self.isRight = "product" in port.deviceInfo and port.deviceInfo["product"] == "Cadence-R"
@@ -506,6 +529,24 @@ class CadenceDeviceDriver(HidBrailleDriver):
 	def getPosition(self, side: DevSide) -> DevPosition:
 		flipped = self.isFlipped[side]
 		return getDevicePosition(side, flipped)
+
+	def setOneHanded(self, newOneHanded: bool):
+		if newOneHanded == self.isOneHanded:
+			return
+		
+		report = HidFeatureReport(self._dev)
+		for valueCap in self.valueCapsList:
+			if valueCap.LinkUsagePage == HID_USAGE_PAGE_BRAILLE and valueCap.u1.NotRange.Usage == 7:
+				report.setUsageValueArray(
+					HID_USAGE_PAGE_BRAILLE,
+					valueCap.LinkCollection,
+					valueCap.u1.NotRange.Usage,
+					b"\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33" if newOneHanded else b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+				)
+
+		self._dev.setFeature(report.data)
+		self.isOneHanded = newOneHanded
+
 
 # A driver for multiple devices connected simultaneously
 # This is the driver than NVDA sees, but actual communication with the device is delegated to CadenceDeviceDriver
@@ -651,6 +692,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 			if self.imageTimer is not None:
 				self.imageTimer.cancel()
 				self.imageTimer = None
+		self.updateOneHanded()
 	
 	# draw image mode (screencapture of current navigator object)
 	def displayImage(self, resetView = False):
@@ -711,7 +753,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		yOffset = (16 if (pos == DevPosition.BottomLeft or pos == DevPosition.BottomRight) else 0) - self.offsetRows * 4
 		image = [[fullImage[y + yOffset][x + xOffset] for x in range(24)] for y in range(16)]
 		flipped = pos == DevPosition.TopLeft or pos == DevPosition.TopRight
-		log.info(f"display {pos} / {xOffset} / {yOffset} / {flipped}")
+		# log.info(f"display {pos} / {xOffset} / {yOffset} / {flipped}")
 		if flipped:
 			image = flipImage(image)
 		return image
@@ -721,7 +763,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		if not isImage:
 			self.lastDisplayedNonImage = cells
 		if isImage == self.displayingImage:
-			log.info(f"display {len(cells)} {self.numRows} {self.numCols}")
+			# log.info(f"display {len(cells)} {self.numRows} {self.numCols}")
 			if len(cells) < self.numRows * self.numCols:
 				cells = [(cells[i] if i < len(cells) else 0) for i in self.numRows * self.numCols]
 			cells = cells[:(self.numRows * self.numCols)]
@@ -729,11 +771,11 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 			for devI, device in enumerate(self.devices):
 				sides = device.getSides()
 				leftDevPos = device.getPosition(sides[0])
-				log.info(f"left {devI} {leftDevPos}")
+				# log.info(f"left {devI} {leftDevPos}")
 				image = self.getImage(fullImage, leftDevPos)
 				if len(sides) > 1:
 					rightDevPos = device.getPosition(sides[1])
-					log.info(f"right {devI} {rightDevPos}")
+					# log.info(f"right {devI} {rightDevPos}")
 					rightSideImage = self.getImage(fullImage, rightDevPos)
 					image = joinImagesHorizontally(image, rightSideImage)
 				devCells = imageToCells(image)
@@ -947,6 +989,18 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 			if DevPosition.BottomLeft in devPositions or DevPosition.BottomRight in devPositions:
 				self.offsetRows = 4
 			self.numRows = 4
+
+		log.info(f"## UPDATED SIZE {self.numRows} {self.numCols} {[device.isTwoDevices() for device in self.devices]}")
+
+		self.updateOneHanded()
+	
+	def updateOneHanded(self):
+		newOneHanded = False if self.displayingImage else (self.numCols == 12)
+
+		log.info(f"setting one handed {newOneHanded}")
+
+		for device in self.devices:
+			device.setOneHanded(newOneHanded)
 
 	# get current device position for a device
 	def getDevPosition(self, device: tuple[int, DevSide]) -> DevPosition:
