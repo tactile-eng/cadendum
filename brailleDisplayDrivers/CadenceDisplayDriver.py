@@ -1,3 +1,4 @@
+import ctypes.wintypes
 from logHandler import log
 from brailleDisplayDrivers.hidBrailleStandard import HidBrailleDriver, InputGesture
 import bdDetect
@@ -18,10 +19,416 @@ import queueHandler
 from bdDetect import HID_USAGE_PAGE_BRAILLE
 from hwIo import hid
 import hidpi
+import hwPortUtils
+import typing
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
 hidDll = ctypes.windll.hid
+
+def _getHidInfo(hwId, path):
+	info = {
+		"hardwareID": hwId,
+		"devicePath": path,
+	}
+	hwId = hwId.split("\\", 1)[1]
+	if hwId.startswith("VID"):
+		info["provider"] = "usb"
+		info["usbID"] = hwId[:17]  # VID_xxxx&PID_xxxx
+	elif hwId.startswith("{00001124-0000-1000-8000-00805f9b34fb}"):
+		info["provider"] = "bluetooth"
+	elif hwId.startswith("{00001812-0000-1000-8000-00805f9b34fb}"):
+		# Low energy bluetooth: #15470
+		info["provider"] = "bluetooth"
+	else:
+		# Unknown provider.
+		info["provider"] = None
+		return info
+	# Fetch additional info about the HID device.
+	from serial.win32 import FILE_FLAG_OVERLAPPED, INVALID_HANDLE_VALUE, CreateFile
+
+	handle = CreateFile(
+		path,
+		0,
+		hwPortUtils.winKernel.FILE_SHARE_READ | hwPortUtils.winKernel.FILE_SHARE_WRITE,
+		None,
+		hwPortUtils.winKernel.OPEN_EXISTING,
+		FILE_FLAG_OVERLAPPED,
+		None,
+	)
+	if handle == INVALID_HANDLE_VALUE:
+		if True:
+			log.debugWarning(f"Opening device {path} to get additional info failed: {ctypes.WinError()}")
+		return info
+	try:
+		attribs = hwPortUtils.HIDD_ATTRIBUTES()
+		if ctypes.windll.hid.HidD_GetAttributes(handle, ctypes.byref(attribs)):
+			info["vendorID"] = attribs.VendorID
+			info["productID"] = attribs.ProductID
+			info["versionNumber"] = attribs.VersionNumber
+		else:
+			if True:
+				log.debugWarning("HidD_GetAttributes failed")
+		buf = ctypes.create_unicode_buffer(128)
+		nrOfBytes = ctypes.sizeof(buf)
+		if ctypes.windll.hid.HidD_GetManufacturerString(handle, buf, nrOfBytes):
+			info["manufacturer"] = buf.value
+		if ctypes.windll.hid.HidD_GetProductString(handle, buf, nrOfBytes):
+			info["product"] = buf.value
+		pd = ctypes.c_void_p()
+		if ctypes.windll.hid.HidD_GetPreparsedData(handle, ctypes.byref(pd)):
+			try:
+				caps = hidpi.HIDP_CAPS()
+				ctypes.windll.hid.HidP_GetCaps(pd, ctypes.byref(caps))
+				info["HIDUsagePage"] = caps.UsagePage
+			finally:
+				ctypes.windll.hid.HidD_FreePreparsedData(pd)
+	finally:
+		hwPortUtils.winKernel.closeHandle(handle)
+	return info
+
+PKEYS = [\
+["DEVPKEY_DeviceContainer_ModelNumber",              "{656A3BB3-ECC0-43FD-8477-4AE0404A96CD}", 8195],
+["DEVPKEY_NAME",                          "{b725f130-47ef-101a-a5f1-02608c9eebac}", 10],
+["DEVPKEY_Device_DeviceDesc",             "{a45c254e-df1c-4efd-8020-67d146a850e0}", 2],
+["DEVPKEY_Device_HardwareIds",            "{a45c254e-df1c-4efd-8020-67d146a850e0}", 3],
+["DEVPKEY_Device_CompatibleIds",          "{a45c254e-df1c-4efd-8020-67d146a850e0}", 4],
+["DEVPKEY_Device_Service",                "{a45c254e-df1c-4efd-8020-67d146a850e0}", 6],
+["DEVPKEY_Device_Class",                  "{a45c254e-df1c-4efd-8020-67d146a850e0}", 9],
+["DEVPKEY_Device_ClassGuid",              "{a45c254e-df1c-4efd-8020-67d146a850e0}", 10],
+["DEVPKEY_Device_Driver",                 "{a45c254e-df1c-4efd-8020-67d146a850e0}", 11],
+["DEVPKEY_Device_ConfigFlags",            "{a45c254e-df1c-4efd-8020-67d146a850e0}", 12],
+["DEVPKEY_Device_Manufacturer",           "{a45c254e-df1c-4efd-8020-67d146a850e0}", 13],
+["DEVPKEY_Device_FriendlyName",           "{a45c254e-df1c-4efd-8020-67d146a850e0}", 14],
+["DEVPKEY_Device_LocationInfo",           "{a45c254e-df1c-4efd-8020-67d146a850e0}", 15],
+["DEVPKEY_Device_PDOName",                "{a45c254e-df1c-4efd-8020-67d146a850e0}", 16],
+["DEVPKEY_Device_Capabilities",           "{a45c254e-df1c-4efd-8020-67d146a850e0}", 17],
+["DEVPKEY_Device_UINumber",               "{a45c254e-df1c-4efd-8020-67d146a850e0}", 18],
+["DEVPKEY_Device_UpperFilters",           "{a45c254e-df1c-4efd-8020-67d146a850e0}", 19],
+["DEVPKEY_Device_LowerFilters",           "{a45c254e-df1c-4efd-8020-67d146a850e0}", 20],
+["DEVPKEY_Device_BusTypeGuid",            "{a45c254e-df1c-4efd-8020-67d146a850e0}", 21],
+["DEVPKEY_Device_LegacyBusType",          "{a45c254e-df1c-4efd-8020-67d146a850e0}", 22],
+["DEVPKEY_Device_BusNumber",              "{a45c254e-df1c-4efd-8020-67d146a850e0}", 23],
+["DEVPKEY_Device_EnumeratorName",         "{a45c254e-df1c-4efd-8020-67d146a850e0}", 24],
+["DEVPKEY_Device_Security",               "{a45c254e-df1c-4efd-8020-67d146a850e0}", 25],
+["DEVPKEY_Device_SecuritySDS",            "{a45c254e-df1c-4efd-8020-67d146a850e0}", 26],
+["DEVPKEY_Device_DevType",                "{a45c254e-df1c-4efd-8020-67d146a850e0}", 27],
+["DEVPKEY_Device_Exclusive",              "{a45c254e-df1c-4efd-8020-67d146a850e0}", 28],
+["DEVPKEY_Device_Characteristics",        "{a45c254e-df1c-4efd-8020-67d146a850e0}", 29],
+["DEVPKEY_Device_Address",                "{a45c254e-df1c-4efd-8020-67d146a850e0}", 30],
+["DEVPKEY_Device_UINumberDescFormat",     "{a45c254e-df1c-4efd-8020-67d146a850e0}", 31],
+["DEVPKEY_Device_PowerData",              "{a45c254e-df1c-4efd-8020-67d146a850e0}", 32],
+["DEVPKEY_Device_RemovalPolicy",          "{a45c254e-df1c-4efd-8020-67d146a850e0}", 33],
+["DEVPKEY_Device_RemovalPolicyDefault",   "{a45c254e-df1c-4efd-8020-67d146a850e0}", 34],
+["DEVPKEY_Device_RemovalPolicyOverride",  "{a45c254e-df1c-4efd-8020-67d146a850e0}", 35],
+["DEVPKEY_Device_InstallState",           "{a45c254e-df1c-4efd-8020-67d146a850e0}", 36],
+["DEVPKEY_Device_LocationPaths",          "{a45c254e-df1c-4efd-8020-67d146a850e0}", 37],
+["DEVPKEY_Device_BaseContainerId",        "{a45c254e-df1c-4efd-8020-67d146a850e0}", 38],
+["DEVPKEY_Device_InstanceId",             "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 256],
+["DEVPKEY_Device_DevNodeStatus",          "{4340a6c5-93fa-4706-972c-7b648008a5a7}", 2],
+["DEVPKEY_Device_ProblemCode",            "{4340a6c5-93fa-4706-972c-7b648008a5a7}", 3],
+["DEVPKEY_Device_EjectionRelations",      "{4340a6c5-93fa-4706-972c-7b648008a5a7}", 4],
+["DEVPKEY_Device_RemovalRelations",       "{4340a6c5-93fa-4706-972c-7b648008a5a7}", 5],
+["DEVPKEY_Device_PowerRelations",         "{4340a6c5-93fa-4706-972c-7b648008a5a7}", 6],
+["DEVPKEY_Device_BusRelations",           "{4340a6c5-93fa-4706-972c-7b648008a5a7}", 7],
+["DEVPKEY_Device_Parent",                 "{4340a6c5-93fa-4706-972c-7b648008a5a7}", 8],
+["DEVPKEY_Device_Children",               "{4340a6c5-93fa-4706-972c-7b648008a5a7}", 9],
+["DEVPKEY_Device_Siblings",               "{4340a6c5-93fa-4706-972c-7b648008a5a7}", 10],
+["DEVPKEY_Device_TransportRelations",     "{4340a6c5-93fa-4706-972c-7b648008a5a7}", 11],
+["DEVPKEY_Device_ProblemStatus",          "{4340a6c5-93fa-4706-972c-7b648008a5a7}", 12],
+["DEVPKEY_Device_Reported",                   "{80497100-8c73-48b9-aad9-ce387e19c56e}", 2],
+["DEVPKEY_Device_Legacy",                     "{80497100-8c73-48b9-aad9-ce387e19c56e}", 3],
+["DEVPKEY_Device_ContainerId",             "{8c7ed206-3f8a-4827-b3ab-ae9e1faefc6c}", 2],
+["DEVPKEY_Device_InLocalMachineContainer", "{8c7ed206-3f8a-4827-b3ab-ae9e1faefc6c}", 4],
+["DEVPKEY_Device_Model",                  "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 39],
+["DEVPKEY_Device_ModelId",                     "{80d81ea6-7473-4b0c-8216-efc11a2c4c8b}", 2],
+["DEVPKEY_Device_FriendlyNameAttributes",      "{80d81ea6-7473-4b0c-8216-efc11a2c4c8b}", 3],
+["DEVPKEY_Device_ManufacturerAttributes",      "{80d81ea6-7473-4b0c-8216-efc11a2c4c8b}", 4],
+["DEVPKEY_Device_PresenceNotForDevice",        "{80d81ea6-7473-4b0c-8216-efc11a2c4c8b}", 5],
+["DEVPKEY_Device_SignalStrength",              "{80d81ea6-7473-4b0c-8216-efc11a2c4c8b}", 6],
+["DEVPKEY_Device_IsAssociateableByUserAction", "{80d81ea6-7473-4b0c-8216-efc11a2c4c8b}", 7],
+["DEVPKEY_Device_ShowInUninstallUI",           "{80d81ea6-7473-4b0c-8216-efc11a2c4c8b}", 8],
+["DEVPKEY_Device_Numa_Proximity_Domain",    "{540b947e-8b40-45bc-a8a2-6a0b894cbda2}", 1],
+["DEVPKEY_Device_DHP_Rebalance_Policy",     "{540b947e-8b40-45bc-a8a2-6a0b894cbda2}", 2],
+["DEVPKEY_Device_Numa_Node",                "{540b947e-8b40-45bc-a8a2-6a0b894cbda2}", 3],
+["DEVPKEY_Device_BusReportedDeviceDesc",    "{540b947e-8b40-45bc-a8a2-6a0b894cbda2}", 4],
+["DEVPKEY_Device_IsPresent",                "{540b947e-8b40-45bc-a8a2-6a0b894cbda2}", 5],
+["DEVPKEY_Device_HasProblem",               "{540b947e-8b40-45bc-a8a2-6a0b894cbda2}", 6],
+["DEVPKEY_Device_ConfigurationId",          "{540b947e-8b40-45bc-a8a2-6a0b894cbda2}", 7],
+["DEVPKEY_Device_ReportedDeviceIdsHash",    "{540b947e-8b40-45bc-a8a2-6a0b894cbda2}", 8],
+["DEVPKEY_Device_PhysicalDeviceLocation",   "{540b947e-8b40-45bc-a8a2-6a0b894cbda2}", 9],
+["DEVPKEY_Device_BiosDeviceName",           "{540b947e-8b40-45bc-a8a2-6a0b894cbda2}", 10],
+["DEVPKEY_Device_DriverProblemDesc",        "{540b947e-8b40-45bc-a8a2-6a0b894cbda2}", 11],
+["DEVPKEY_Device_DebuggerSafe",             "{540b947e-8b40-45bc-a8a2-6a0b894cbda2}", 12],
+["DEVPKEY_Device_PostInstallInProgress",    "{540b947e-8b40-45bc-a8a2-6a0b894cbda2}", 13],
+["DEVPKEY_Device_Stack",                    "{540b947e-8b40-45bc-a8a2-6a0b894cbda2}", 14],
+["DEVPKEY_Device_ExtendedConfigurationIds", "{540b947e-8b40-45bc-a8a2-6a0b894cbda2}", 15],
+["DEVPKEY_Device_IsRebootRequired",         "{540b947e-8b40-45bc-a8a2-6a0b894cbda2}", 16],
+["DEVPKEY_Device_FirmwareDate",             "{540b947e-8b40-45bc-a8a2-6a0b894cbda2}", 17],
+["DEVPKEY_Device_FirmwareVersion",          "{540b947e-8b40-45bc-a8a2-6a0b894cbda2}", 18],
+["DEVPKEY_Device_FirmwareRevision",         "{540b947e-8b40-45bc-a8a2-6a0b894cbda2}", 19],
+["DEVPKEY_Device_DependencyProviders",      "{540b947e-8b40-45bc-a8a2-6a0b894cbda2}", 20],
+["DEVPKEY_Device_DependencyDependents",     "{540b947e-8b40-45bc-a8a2-6a0b894cbda2}", 21],
+["DEVPKEY_Device_SoftRestartSupported",     "{540b947e-8b40-45bc-a8a2-6a0b894cbda2}", 22],
+["DEVPKEY_Device_ExtendedAddress",          "{540b947e-8b40-45bc-a8a2-6a0b894cbda2}", 23],
+["DEVPKEY_Device_SessionId",               "{83da6326-97a6-4088-9453-a1923f573b29}", 6],
+["DEVPKEY_Device_InstallDate",             "{83da6326-97a6-4088-9453-a1923f573b29}", 100],
+["DEVPKEY_Device_FirstInstallDate",        "{83da6326-97a6-4088-9453-a1923f573b29}", 101],
+["DEVPKEY_Device_LastArrivalDate",         "{83da6326-97a6-4088-9453-a1923f573b29}", 102],
+["DEVPKEY_Device_LastRemovalDate",         "{83da6326-97a6-4088-9453-a1923f573b29}", 103],
+["DEVPKEY_Device_DriverDate",               "{a8b865dd-2e3d-4094-ad97-e593a7c,5,6,}", 2],
+["DEVPKEY_Device_DriverVersion),",            "{a8b865dd-2e3d-4094-ad97-e593a7c,5,6,}", 3],
+["DEVPKEY_Device_DriverDesc),",               "{a8b865dd-2e3d-4094-ad97-e593a7c,5,6,}", 4],
+["DEVPKEY_Device_DriverInfPath),",            "{a8b865dd-2e3d-4094-ad97-e593a7c,5,6,}", 5],
+["DEVPKEY_Device_DriverInfSection),",         "{a8b865dd-2e3d-4094-ad97-e593a7c,5,6,}", 6],
+["DEVPKEY_Device_DriverInfSectionExt),",      "{a8b865dd-2e3d-4094-ad97-e593a7c,5,6,}", 7],
+["DEVPKEY_Device_MatchingDeviceId),",         "{a8b865dd-2e3d-4094-ad97-e593a7c,5,6,}", 8],
+["DEVPKEY_Device_DriverProvider),",           "{a8b865dd-2e3d-4094-ad97-e593a7c,5,6,}", 9],
+["DEVPKEY_Device_DriverPropPageProvider),",   "{a8b865dd-2e3d-4094-ad97-e593a7c,5,6,}", 10],
+["DEVPKEY_Device_DriverCoInstallers",       "{a8b865dd-2e3d-4094-ad97-e593a7c,5,6,}", 11],
+["DEVPKEY_Device_ResourcePickerTags",       "{a8b865dd-2e3d-4094-ad97-e593a7c,5,6,}", 12],
+["DEVPKEY_Device_ResourcePickerExceptions", "{a8b865dd-2e3d-4094-ad97-e593a7c,5,6,}", 13],
+["DEVPKEY_Device_DriverRank",               "{a8b865dd-2e3d-4094-ad97-e593a7c,5,6,}", 14],
+["DEVPKEY_Device_DriverLogoLevel",          "{a8b865dd-2e3d-4094-ad97-e593a7c,5,6,}", 15],
+["DEVPKEY_Device_NoConnectSound",              "{a8b865dd-2e3d-4094-ad97-e593a7c,5,6,}", 17],
+["DEVPKEY_Device_GenericDriverInstalled",      "{a8b865dd-2e3d-4094-ad97-e593a7c,5,6,}", 18],
+["DEVPKEY_Device_AdditionalSoftwareRequested", "{a8b865dd-2e3d-4094-ad97-e593a7c,5,6,}", 19],
+["DEVPKEY_Device_SafeRemovalRequired",         "{afd97640-86a3-4210-b67c-289c41aabe55}", 2],
+["DEVPKEY_Device_SafeRemovalRequiredOverride", "{afd97640-86a3-4210-b67c-289c41aabe55}", 3],
+["DEVPKEY_DrvPkg_Model",                  "{cf73bb51-3abf-44a2-85e0-9a3dc7a12132}", 2],
+["DEVPKEY_DrvPkg_VendorWebSite",          "{cf73bb51-3abf-44a2-85e0-9a3dc7a12132}", 3],
+["DEVPKEY_DrvPkg_DetailedDescription",    "{cf73bb51-3abf-44a2-85e0-9a3dc7a12132}", 4],
+["DEVPKEY_DrvPkg_DocumentationLink",      "{cf73bb51-3abf-44a2-85e0-9a3dc7a12132}", 5],
+["DEVPKEY_DrvPkg_Icon",                   "{cf73bb51-3abf-44a2-85e0-9a3dc7a12132}", 6],
+["DEVPKEY_DrvPkg_BrandingIcon",           "{cf73bb51-3abf-44a2-85e0-9a3dc7a12132}", 7],
+["DEVPKEY_DeviceClass_UpperFilters",      "{4321918b-f69e-470d-a5de-4d88c75ad24b}", 19],
+["DEVPKEY_DeviceClass_LowerFilters",      "{4321918b-f69e-470d-a5de-4d88c75ad24b}", 20],
+["DEVPKEY_DeviceClass_Security",          "{4321918b-f69e-470d-a5de-4d88c75ad24b}", 25],
+["DEVPKEY_DeviceClass_SecuritySDS",       "{4321918b-f69e-470d-a5de-4d88c75ad24b}", 26],
+["DEVPKEY_DeviceClass_DevType",           "{4321918b-f69e-470d-a5de-4d88c75ad24b}", 27],
+["DEVPKEY_DeviceClass_Exclusive",         "{4321918b-f69e-470d-a5de-4d88c75ad24b}", 28],
+["DEVPKEY_DeviceClass_Characteristics",   "{4321918b-f69e-470d-a5de-4d88c75ad24b}", 29],
+["DEVPKEY_DeviceClass_Name",              "{259abffc-50a7-47ce-af8,-8,9,7,7,3,6,}", 2],
+["DEVPKEY_DeviceClass_ClassName),",         "{259abffc-50a7-47ce-af8,-8,9,7,7,3,6,}", 3],
+["DEVPKEY_DeviceClass_Icon),",              "{259abffc-50a7-47ce-af8,-8,9,7,7,3,6,}", 4],
+["DEVPKEY_DeviceClass_ClassInstaller),",    "{259abffc-50a7-47ce-af8,-8,9,7,7,3,6,}", 5],
+["DEVPKEY_DeviceClass_PropPageProvider),",  "{259abffc-50a7-47ce-af8,-8,9,7,7,3,6,}", 6],
+["DEVPKEY_DeviceClass_NoInstallClass),",    "{259abffc-50a7-47ce-af8,-8,9,7,7,3,6,}", 7],
+["DEVPKEY_DeviceClass_NoDisplayClass),",    "{259abffc-50a7-47ce-af8,-8,9,7,7,3,6,}", 8],
+["DEVPKEY_DeviceClass_SilentInstall),",     "{259abffc-50a7-47ce-af8,-8,9,7,7,3,6,}", 9],
+["DEVPKEY_DeviceClass_NoUseClass),",        "{259abffc-50a7-47ce-af8,-8,9,7,7,3,6,}", 10],
+["DEVPKEY_DeviceClass_DefaultService",    "{259abffc-50a7-47ce-af8,-8,9,7,7,3,6,}", 11],
+["DEVPKEY_DeviceClass_IconPath",          "{259abffc-50a7-47ce-af8,-8,9,7,7,3,6,}", 12],
+["DEVPKEY_DeviceClass_DHPRebalanceOptOut", "{d14d3ef3-66cf-4ba2-9d38-0ddb37ab4701}", 2],
+["DEVPKEY_DeviceClass_ClassCoInstallers",  "{713d1703-a2e2-49f5-9214-56472ef3da5c}", 2],
+["DEVPKEY_DeviceInterface_FriendlyName",       "{026e516e-b814-414b-83cd-856d6fef4822}", 2],
+["DEVPKEY_DeviceInterface_Enabled",            "{026e516e-b814-414b-83cd-856d6fef4822}", 3],
+["DEVPKEY_DeviceInterface_ClassGuid",          "{026e516e-b814-414b-83cd-856d6fef4822}", 4],
+["DEVPKEY_DeviceInterface_ReferenceString",    "{026e516e-b814-414b-83cd-856d6fef4822}", 5],
+["DEVPKEY_DeviceInterface_Restricted",         "{026e516e-b814-414b-83cd-856d6fef4822}", 6],
+["DEVPKEY_DeviceInterface_UnrestrictedAppCapabilities", "{026e516e-b814-414b-83cd-856d6fef4822}", 8],
+["DEVPKEY_DeviceInterface_SchematicName",      "{026e516e-b814-414b-83cd-856d6fef4822}", 9],
+["DEVPKEY_DeviceInterfaceClass_DefaultInterface",    "{14c83a99-0b3f-44b7-be4c-a178d3990564}", 2],
+["DEVPKEY_DeviceInterfaceClass_Name",                "{14c83a99-0b3f-44b7-be4c-a178d3990564}", 3],
+["DEVPKEY_DeviceContainer_Address",                  "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 51],
+["DEVPKEY_DeviceContainer_DiscoveryMethod",          "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 52],
+["DEVPKEY_DeviceContainer_IsEncrypted",              "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 53],
+["DEVPKEY_DeviceContainer_IsAuthenticated",          "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 54],
+["DEVPKEY_DeviceContainer_IsConnected",              "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 55],
+["DEVPKEY_DeviceContainer_IsPaired",                 "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 56],
+["DEVPKEY_DeviceContainer_Icon",                     "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 57],
+["DEVPKEY_DeviceContainer_Version",                  "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 65],
+["DEVPKEY_DeviceContainer_Last_Seen",                "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 66],
+["DEVPKEY_DeviceContainer_Last_Connected",           "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 67],
+["DEVPKEY_DeviceContainer_IsShowInDisconnectedState", "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 68],
+["DEVPKEY_DeviceContainer_IsLocalMachine",           "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 70],
+["DEVPKEY_DeviceContainer_MetadataPath",             "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 71],
+["DEVPKEY_DeviceContainer_IsMetadataSearchInProgress", "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 72],
+["DEVPKEY_DeviceContainer_MetadataChecksum",         "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 73],
+["DEVPKEY_DeviceContainer_IsNotInterestingForDisplay", "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 74],
+["DEVPKEY_DeviceContainer_LaunchDeviceStageOnDeviceConnect", "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 76],
+["DEVPKEY_DeviceContainer_LaunchDeviceStageFromExplorer", "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 77],
+["DEVPKEY_DeviceContainer_BaselineExperienceId",     "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 78],
+["DEVPKEY_DeviceContainer_IsDeviceUniquelyIdentifiable", "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 79],
+["DEVPKEY_DeviceContainer_AssociationArray",         "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 80],
+["DEVPKEY_DeviceContainer_DeviceDescription1",       "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 81],
+["DEVPKEY_DeviceContainer_DeviceDescription2",       "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 82],
+["DEVPKEY_DeviceContainer_HasProblem",               "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 83],
+["DEVPKEY_DeviceContainer_IsSharedDevice",           "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 84],
+["DEVPKEY_DeviceContainer_IsNetworkDevice",          "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 85],
+["DEVPKEY_DeviceContainer_IsDefaultDevice",          "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 86],
+["DEVPKEY_DeviceContainer_MetadataCabinet",          "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 87],
+["DEVPKEY_DeviceContainer_RequiresPairingElevation", "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 88],
+["DEVPKEY_DeviceContainer_ExperienceId",             "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 89],
+["DEVPKEY_DeviceContainer_Category",                 "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 90],
+["DEVPKEY_DeviceContainer_Category_Desc_Singular",   "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 91],
+["DEVPKEY_DeviceContainer_Category_Desc_Plural",     "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 92],
+["DEVPKEY_DeviceContainer_Category_Icon",            "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 93],
+["DEVPKEY_DeviceContainer_CategoryGroup_Desc",       "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 94],
+["DEVPKEY_DeviceContainer_CategoryGroup_Icon",       "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 95],
+["DEVPKEY_DeviceContainer_PrimaryCategory",          "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 97],
+["DEVPKEY_DeviceContainer_UnpairUninstall",          "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 98],
+["DEVPKEY_DeviceContainer_RequiresUninstallElevation", "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 99],
+["DEVPKEY_DeviceContainer_DeviceFunctionSubRank",    "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 100],
+["DEVPKEY_DeviceContainer_AlwaysShowDeviceAsConnected", "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 101],
+["DEVPKEY_DeviceContainer_ConfigFlags",              "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 105],
+["DEVPKEY_DeviceContainer_PrivilegedPackageFamilyNames", "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 106],
+["DEVPKEY_DeviceContainer_CustomPrivilegedPackageFamilyNames", "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 107],
+["DEVPKEY_DeviceContainer_IsRebootRequired",         "{78c34fc8-104a-4aca-9ea4-524d52996e57}", 108],
+["DEVPKEY_DeviceContainer_FriendlyName",             "{656A3BB3-ECC0-43FD-8477-4AE0404A96CD}", 12288],
+["DEVPKEY_DeviceContainer_Manufacturer",             "{656A3BB3-ECC0-43FD-8477-4AE0404A96CD}", 8192],
+["DEVPKEY_DeviceContainer_ModelName",                "{656A3BB3-ECC0-43FD-8477-4AE0404A96CD}", 8194],
+["DEVPKEY_DeviceContainer_ModelNumber",              "{656A3BB3-ECC0-43FD-8477-4AE0404A96CD}", 8195],
+["DEVPKEY_DeviceContainer_InstallInProgress",        "{83da6326-97a6-4088-9453-a1923f573b29}", 9],
+["DEVPKEY_DevQuery_ObjectType",                  "{13673f42-a3d6-49f6-b4da-ae46e0c5237c}", 2],
+]
+
+CM_Get_Parent = ctypes.windll.cfgmgr32.CM_Get_Parent
+CM_Get_Parent.argtypes = [ctypes.POINTER(hwPortUtils.DWORD), hwPortUtils.DWORD, ctypes.c_ulong]
+CM_Get_Parent.restype = hwPortUtils.DWORD
+
+SetupDiCreateDeviceInfoList = ctypes.windll.setupapi.SetupDiCreateDeviceInfoList
+SetupDiCreateDeviceInfoList.argtypes = [
+	ctypes.POINTER(hwPortUtils.GUID),
+	hwPortUtils.HWND,
+]
+SetupDiCreateDeviceInfoList.restype = hwPortUtils.HDEVINFO
+
+SetupDiOpenDeviceInfoW = ctypes.windll.setupapi.SetupDiOpenDeviceInfoW 
+SetupDiOpenDeviceInfoW.argtypes = [hwPortUtils.HDEVINFO,
+	ctypes.wintypes.LPCWSTR,
+	hwPortUtils.HWND,
+	hwPortUtils.DWORD,
+	ctypes.POINTER(hwPortUtils.SP_DEVINFO_DATA)]
+SetupDiOpenDeviceInfoW.restype = ctypes.c_bool
+GetLastError = ctypes.windll.kernel32.GetLastError
+GetLastError.restype = hwPortUtils.DWORD
+
+def get_parent(child_dev_inst: hwPortUtils.SP_DEVINFO_DATA, g_hdi: hwPortUtils.HDEVINFO) -> hwPortUtils.SP_DEVINFO_DATA | None:
+	buf = ctypes.create_unicode_buffer(1024)
+	log.info(f"HIDTest buf {type(buf)} {ctypes.sizeof(buf)}")
+	
+	parent_dev_inst = hwPortUtils.DWORD()
+	ret = CM_Get_Parent(ctypes.byref(parent_dev_inst), child_dev_inst.DevInst, ctypes.c_ulong(0))
+	if ret != 0:
+		raise ctypes.WinError(ctypes.get_last_error())
+
+	log.info(f"HIDTest parent_dev_inst {parent_dev_inst}")
+	ret = hwPortUtils.CM_Get_Device_ID(parent_dev_inst, buf, ctypes.sizeof(buf) - 1, 0)
+	if ret != 0:
+		raise ctypes.WinError(ctypes.get_last_error())
+	
+	log.info(f"HIDTest dev inst buf {buf.value}")
+	# g_hdi = SetupDiCreateDeviceInfoList(None, None)
+	
+	# log.info(f"HIDTest g_hdi {g_hdi}")
+	parent_devinfo_data = hwPortUtils.SP_DEVINFO_DATA()
+	parent_devinfo_data.cbSize = ctypes.sizeof(hwPortUtils.SP_DEVINFO_DATA)
+	ret = SetupDiOpenDeviceInfoW(g_hdi, buf.value, None, 0, ctypes.byref(parent_devinfo_data))
+	if not ret:
+		raise ctypes.WinError(ctypes.get_last_error())
+	
+	log.info(f"HIDTest SetupDiOpenDeviceInfoW {parent_devinfo_data}")
+	return parent_devinfo_data
+
+def listHidDevices(onlyAvailable: bool = True) -> typing.Iterator[dict]:
+	"""List HID devices on the system.
+	@param onlyAvailable: Only return devices that are currently available.
+	@return: Generates dicts including keys such as hardwareID,
+		usbID (in the form "VID_xxxx&PID_xxxx")
+		and devicePath.
+	"""
+	_hidGuid = hwPortUtils._hidGuid
+	if not _hidGuid:
+		log.error("no hidGuid")
+		# _hidGuid = hwPortUtils.GUID()
+		# ctypes.windll.hid.HidD_GetHidGuid(ctypes.byref(_hidGuid))
+
+	for g_hdi, idd, devinfo, buf in hwPortUtils._listDevices(_hidGuid, onlyAvailable):
+		# hardware ID
+		if not hwPortUtils.SetupDiGetDeviceRegistryProperty(
+			g_hdi,
+			ctypes.byref(devinfo),
+			hwPortUtils.SPDRP_HARDWAREID,
+			None,
+			ctypes.byref(buf),
+			ctypes.sizeof(buf) - 1,
+			None,
+		):
+			# Ignore ERROR_INSUFFICIENT_BUFFER
+			if ctypes.GetLastError() != hwPortUtils.ERROR_INSUFFICIENT_BUFFER:
+				raise ctypes.WinError()
+		else:
+			hwId = buf.value
+			info = _getHidInfo(hwId, idd.DevicePath)
+
+			if "VID&02361f_PID&52ae" in info["hardwareID"]:
+				log.info(f"HIDTest ALL {g_hdi} {idd} {devinfo} {buf}")
+				log.info(f"HIDTest devinfo {devinfo}")
+				try:
+					parent = get_parent(devinfo, g_hdi)
+					parent2 = get_parent(parent, g_hdi)
+
+					propRegDataType = hwPortUtils.DWORD()
+					log.info(f"HIDTest buf size {ctypes.sizeof(buf)}")
+					for pkeyname, pkeyid, pkeynum in PKEYS:
+						# log.info(f"HIDTest {pkeyname} {pkeyid} {pkeynum}")
+						pkey = hwPortUtils.DEVPROPKEY(hwPortUtils.GUID(pkeyid), pkeynum)
+						if not hwPortUtils.SetupDiGetDeviceProperty(
+							g_hdi,
+							ctypes.byref(parent2),
+							ctypes.byref(pkey),
+							ctypes.byref(propRegDataType),
+							ctypes.byref(buf),
+							ctypes.sizeof(buf) - 1,
+							None,
+							0,
+						):
+							# log.info(
+							# 	f"HIDTest {pkeyname}",
+							# )
+							pass
+						else:
+							log.info(
+								f"HIDTest {pkeyname}: {buf.value}",
+							)
+					# 	parent_device_id = ctypes.create_unicode_buffer(MAX_DEVICE_ID_LEN)
+					# 	if hwPortUtils.CM_Get_Device_ID(parent_dev_inst.value, parent_device_id, MAX_DEVICE_ID_LEN, 0) == 0:
+					# 		parent_dev_info_data = hwPortUtils.SP_DEVINFO_DATA()
+					# 		parent_dev_info_data.cbSize = ctypes.sizeof(hwPortUtils.SP_DEVINFO_DATA)
+					# 		if ctypes.windll.setupapi.SetupDiOpenDeviceInfo(devinfo, parent_device_id, None, 0, ctypes.byref(parent_dev_info_data)):
+					# 			log.info(f"HIDTest PARENT STUFF {parent_dev_info_data}")
+				except Exception as e:
+					log.info(f"HIDTest error: {e}")
+
+
+
+
+						# propRegDataType = hwPortUtils.DWORD()
+						# DEVPKEY_Device_Parent = hwPortUtils.DEVPROPKEY(hwPortUtils.GUID("{4340a6c5-93fa-4706-972c-7b648008a5a7}"), 8)
+						# if not hwPortUtils.SetupDiGetDeviceProperty(
+						# 	g_hdi,
+						# 	ctypes.byref(devinfo),
+						# 	ctypes.byref(DEVPKEY_Device_Parent),
+						# 	ctypes.byref(propRegDataType),
+						# 	ctypes.byref(buf),
+						# 	ctypes.sizeof(buf) - 1,
+						# 	None,
+						# 	0,
+						# ):
+						# 	log.info("HIDTest unable to find parent")
+						# else:
+						# 	log.info(
+						# 		f"HIDTest parent {buf.value}",
+						# 	)
+
+
+			if True:
+				log.debug(f"{info!r}")
+			yield info
+
+	if True:
+		log.debug("Finished listing HID devices")
 
 # device buttons
 class MiniKey(Enum):
@@ -216,7 +623,7 @@ class RunInterval(threading.Thread):
 		self.interval = interval
 		self.daemon = True
 		self.stopFlag = threading.Event()
-	
+
 	def cancel(self):
 		self.stopFlag.set()
 
@@ -233,13 +640,13 @@ class SignalContainer():
 	def __init__(self, value: float):
 		self.value = value
 		self.default = value
-	
+
 	def get(self) -> float:
 		return self.value
 
 	def set(self, val: float):
 		self.value = val
-	
+
 	def reset(self):
 		self.value = self.default
 
@@ -255,16 +662,16 @@ class Slider():
 		self.sliderSCurve = sliderSCurve
 		self.quantize = None
 		self.strictMinMax = strictMinMax
-	
+
 	def get(self) -> float:
 		return self.signal.get()
-	
+
 	def set(self, val: float):
 		self.signal.set(val)
 
 	def getRate(self) -> float:
 		return self.rate.get()
-	
+
 	def setRate(self, val: float):
 		self.rate.set(val)
 
@@ -288,7 +695,7 @@ class Slider():
 	def getNormalised(self):
 		return (self.get() - self.min.get()) / (self.max.get() - self.min.get())
 
-	
+
 	def setNormalized(self, n: float):
 		newValue = n * (self.max.get() - self.min.get()) + self.min.get()
 		if (self.quantize != None):
@@ -297,7 +704,7 @@ class Slider():
 			if (newValue < self.min.get()): newValue = self.min.get()
 			if (newValue > self.max.get()): newValue = self.max.get()
 		self.set(newValue)
-	
+
 	def roundValue(self, n: float) -> float:
 		if (self.quantize == None): return n
 
@@ -331,7 +738,7 @@ class Slider():
 
 	def increase(self):
 		n = self.get()
-		
+
 		if (self.sliderExp):
 			n = n * self.getRate()
 		elif (self.sliderSCurve):
@@ -348,7 +755,7 @@ class Slider():
 
 	def decrease(self):
 		n = self.get()
-					
+
 		if (self.sliderExp):
 			n = n / self.getRate()
 		elif (self.sliderSCurve):
@@ -393,7 +800,7 @@ class CombinedSlider():
 		self.sliderRatios = []
 		for slider in self.sliders:
 			self.sliderRatios.push(slider.get() / firstValue)
-	
+
 	def updateSliders(self):
 		firstValue = self.sliders[0].get()
 		for i in range(len(self.sliders)):
@@ -407,15 +814,15 @@ class CombinedSlider():
 	def increase(self):
 		for slider in self.sliders:
 			slider.increase()
-	
+
 	def decrease(self):
 		for slider in self.sliders:
 			slider.decrease()
-	
+
 	def increaseRate(self):
 		for slider in self.sliders:
 			slider.increaseRate()
-	
+
 	def decreaseRate(self):
 		for slider in self.sliders:
 			slider.decreaseRate()
@@ -439,10 +846,10 @@ def getDevicePosition(side: DevSide, flipped: bool) -> DevPosition:
 			return DevPosition.TopLeft
 		else:
 			return DevPosition.BottomRight
-		
+
 class HidFeatureReport(hid.HidOutputReport):
 	_reportType = hidpi.HIDP_REPORT_TYPE.FEATURE
-	
+
 	def __init__(self, device, reportID=0):
 		super().__init__(device, reportID)
 		self._reportSize = device.caps.FeatureReportByteLength
@@ -469,6 +876,64 @@ class CadenceDeviceDriver(HidBrailleDriver):
 		)
 
 	def __init__(self, port, displayDriver, devIndex):
+		log.info(f"HIDTest")
+		log.info(f"HIDTest port {port}")
+		log.info(f"HIDTest port.deviceInfo[devicePath] {port.deviceInfo['devicePath']}")
+
+		log.info(f"HIDTest")
+
+		for devMatch in bdDetect.getPossibleBluetoothDevicesForDriver(self.name):
+			if devMatch.type != bdDetect.DeviceType.HID:
+				continue
+			log.info(f"HIDTest getPossibleBluetoothDevicesForDriver {devMatch}")
+
+		log.info(f"HIDTest")
+
+		for devMatch in bdDetect.deviceInfoFetcher.hidDevices:
+			if devMatch["vendorID"] == 13855:
+				log.info(f"HIDTest hidDevices {devMatch}")
+
+		log.info(f"HIDTest")
+
+		for devMatch in hwPortUtils.listHidDevices(onlyAvailable=True):
+			if devMatch["vendorID"] == 13855:
+				log.info(f"HIDTest listHidDevices {devMatch}")
+
+		log.info(f"HIDTest")
+
+		if not hwPortUtils._hidGuid:
+			log.info(f"HIDTest NO HIDGUID")
+		else:
+			log.info(f"HIDTest YES HIDGUID")
+		
+		for g_hdi, idd, devinfo, buf in hwPortUtils._listDevices(hwPortUtils._hidGuid, True):
+			log.info(f"HIDTest")
+			# hardware ID
+			if not hwPortUtils.SetupDiGetDeviceRegistryProperty(
+				g_hdi,
+				ctypes.byref(devinfo),
+				hwPortUtils.SPDRP_HARDWAREID,
+				None,
+				ctypes.byref(buf),
+				ctypes.sizeof(buf) - 1,
+				None,
+			):
+				# Ignore ERROR_INSUFFICIENT_BUFFER
+				if ctypes.GetLastError() != hwPortUtils.ERROR_INSUFFICIENT_BUFFER:
+					raise ctypes.WinError()
+				else:
+					log.info("HIDTest insufficient buffer")
+			else:
+				hwId = buf.value
+				info = hwPortUtils._getHidInfo(hwId, idd.DevicePath)
+				log.info(f"HIDTest info {info}")
+				log.info(f"HIDTest devinfo {devinfo}")
+				log.info(f"HIDTest idd.DevicePath {idd.DevicePath}")
+				match = bdDetect.DeviceMatch(bdDetect.DeviceType.HID, info["hardwareID"], info["devicePath"], info)
+				log.info(f"HIDTest match {match}")
+				if idd.DevicePath == port.deviceInfo.devicePath:
+					log.info("HIDTest FOUND")
+		
 		super().__init__(port)
 		# save properties
 		self.displayDriver = displayDriver
@@ -483,12 +948,16 @@ class CadenceDeviceDriver(HidBrailleDriver):
 			ctypes.byref(self.valueCapsList),
 			ctypes.byref(numValueCaps),
 			self._dev._pd)
-		
+
 		self.isOneHanded = not self.isTwoDevices()
-		
+
 		# detect left or right
-		# TODO detect this on bluetooth
-		self.isRight = "product" in port.deviceInfo and port.deviceInfo["product"] == "Cadence-R"
+		if "product" in port.deviceInfo:
+			self.isRight = "product" in port.deviceInfo and port.deviceInfo["product"] == "Cadence-R"
+		else:
+
+
+			self.isRight = False
 
 		# auto-select whether device is flipped based on whether another device is currently in non-flipped position
 		currentPositionsOccupied = [device.getPosition(side) for device in self.displayDriver.devices for side in device.getSides()]
@@ -514,7 +983,7 @@ class CadenceDeviceDriver(HidBrailleDriver):
 	# is this actually two devices where the second one is connected to the first one through bluetooth
 	def isTwoDevices(self):
 		return self.numCols > 12
-	
+
 	# get list of device sides (left or right, or both if the second one is connected to the first one through bluetooth)
 	def getSides(self) -> list[DevSide]:
 		if self.isTwoDevices():
@@ -524,7 +993,7 @@ class CadenceDeviceDriver(HidBrailleDriver):
 			return [DevSide.Right]
 		else:
 			return [DevSide.Left]
-	
+
 	# get position of device
 	def getPosition(self, side: DevSide) -> DevPosition:
 		flipped = self.isFlipped[side]
@@ -533,7 +1002,7 @@ class CadenceDeviceDriver(HidBrailleDriver):
 	def setOneHanded(self, newOneHanded: bool):
 		if newOneHanded == self.isOneHanded:
 			return
-		
+
 		report = HidFeatureReport(self._dev)
 		for valueCap in self.valueCapsList:
 			if valueCap.LinkUsagePage == HID_USAGE_PAGE_BRAILLE and valueCap.u1.NotRange.Usage == 7:
@@ -565,7 +1034,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 	lastTop: int
 	lastFitWidth: int
 	lastFitHeight: int
-	
+
 	prevKeysDown: list[tuple[MiniKey, tuple[int, DevSide]]]
 	liveKeys: list[tuple[MiniKey, tuple[int, DevSide]]]
 	composedKeys: list[tuple[MiniKey, tuple[int, DevSide]]]
@@ -600,13 +1069,17 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		self.composedKeys = []
 		self.devices = []
 
+		# for test in listHidDevices(True):
+		# 	if "VID&02361f_PID&52ae" in test["hardwareID"]:
+		# 		log.info(f"## HIDTest {test}")
+
 		# check for USB devices
 		for devMatch in self._getTryPorts("usb"):
 			if devMatch.type != bdDetect.DeviceType.HID:
 				continue
 			device = CadenceDeviceDriver(devMatch, self, len(self.devices))
 			self.devices.append(device)
-		
+
 		# if no USB devices, check for bluetooth devices
 		# TODO figure out a way to determine which usb and bluetooth connections are the same device in case we want to connect to a mix of USB and bluetooth devices
 		if len(self.devices) == 0:
@@ -615,7 +1088,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 					continue
 				device = CadenceDeviceDriver(devMatch, self, len(self.devices))
 				self.devices.append(device)
-		
+
 		# if no devices, error
 		if len(self.devices) == 0:
 			raise RuntimeError("no cadence devices")
@@ -678,7 +1151,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 			True)
 		self.bwReversed = True
 		self.colorMode = 0
-	
+
 	# toggle between text and image mode
 	def doToggleImage(self):
 		self.displayingImage = not self.displayingImage
@@ -693,7 +1166,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 				self.imageTimer.cancel()
 				self.imageTimer = None
 		self.updateOneHanded()
-	
+
 	# draw image mode (screencapture of current navigator object)
 	def displayImage(self, resetView = False):
 		queueHandler.queueFunction(
@@ -741,7 +1214,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		boolImage = bitmapToImage(bitmapBuffer, screenWidth, screenHeight, self.bwThreshold.get(), self.bwReversed, self.colorMode)
 		cells = imageToCells(boolImage)
 		self.display(cells, True)
-	
+
 	# restore text mode by drawing text
 	def restoreNonImage(self):
 		if self.lastDisplayedNonImage is not None:
@@ -789,7 +1262,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		if self.imageTimer is not None:
 			self.imageTimer.cancel()
 			self.imageTimer = None
-	
+
 	# helper functions for screen size
 	def getDisplayWidth(self):
 		return self.numCols * 2
@@ -825,7 +1298,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 			if key in flippedKeys:
 				return flippedKeys[key]
 		return key
-	
+
 	# receive button press from device (called by CadenceDeviceDriver)
 	def _hidOnReceive(self, data: bytes, devIndex: int):
 		# log.info("# data: " + " ".join([f"{b:0>8b}" for b in data]))
@@ -872,14 +1345,14 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 				for key in keysUp:
 					if not key in self.composedKeys:
 						self.composedKeys.append(key)
-			
+
 			self.handleKeys(self.liveKeys, self.composedKeys)
 
 			if end:
 				self.composedKeys = []
-			
+
 			self.prevKeysDown = keysDown
-	
+
 	# pan image
 	def pan(self, direction: Direction):
 		log.info("pan")
@@ -972,10 +1445,10 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		for device in self.devices:
 			for side in device.getSides():
 				devPositions.append(device.getPosition(side))
-			
+
 		self.offsetCols = 0
 		self.offsetRows = 0
-		
+
 		if (DevPosition.BottomLeft in devPositions or DevPosition.TopLeft in devPositions) and (DevPosition.BottomRight in devPositions or DevPosition.TopRight in devPositions):
 			self.numCols = 24
 		else:
@@ -993,7 +1466,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 		log.info(f"## UPDATED SIZE {self.numRows} {self.numCols} {[device.isTwoDevices() for device in self.devices]}")
 
 		self.updateOneHanded()
-	
+
 	def updateOneHanded(self):
 		newOneHanded = False if self.displayingImage else (self.numCols == 12)
 
@@ -1005,7 +1478,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 	# get current device position for a device
 	def getDevPosition(self, device: tuple[int, DevSide]) -> DevPosition:
 		return self.devices[device[0]].getPosition(device[1])
-	
+
 	# run after changing device positions to update screens
 	def afterDevicePositionsChanged(self):
 		self.updateScreenSize()
@@ -1028,7 +1501,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 					if otherDevicePos == newPosition:
 						otherDevice.isFlipped[otherDeviceSide] = not flipped
 		self.afterDevicePositionsChanged()
-	
+
 	# cycle through possible device positions
 	def cycleDevPositions(self):
 		# get all individual devices
@@ -1061,7 +1534,7 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 					devIndexFlipped[devIndex] = flipped
 				if isTall:
 					continue
-			
+
 			currentForm = set([getDevicePosition(deviceIds[i][1], positions[i]) for i in range(len(deviceIds))])
 			if currentForm in forms:
 				options.append(list(positions))
@@ -1142,17 +1615,17 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 				# reset - dots1237
 				if MiniKey.Dot1 in liveKeys and MiniKey.Dot2 in liveKeys and MiniKey.Dot3 in liveKeys and MiniKey.Dot7 in liveKeys:
 					self.resetAction()
-	
+
 		if len(liveKeys) == 1:
 			if MiniKey.Row3 in liveKeys:
 				self.doToggleImage()
-		
+
 		if len(composedKeys) == 1:
 			if MiniKey.Row1 in composedKeys or MiniKey.Row4 in composedKeys:
 				position = self.getDevPosition(composedKeysWithPosition[0][1])
 				isCurrentlyFlipped = position == DevPosition.TopLeft or position == DevPosition.TopRight
 				self.flipScreen(composedKeysWithPosition[0][1], (MiniKey.Row4 in composedKeys and not isCurrentlyFlipped) or (MiniKey.Row1 in composedKeys and isCurrentlyFlipped))
-	
+
 	# map of device buttons to keyboard keys for non-image mode
 	gestureMap = inputCore.GlobalGestureMap(
 		{
