@@ -1215,9 +1215,8 @@ class CadenceDisplayDriver(braille.BrailleDisplayDriver):
 						self.panEdgeLeft()
 					elif MiniKey.DPadRight in liveKeys:
 						self.panEdgeRight()
-			elif len(liveKeys) == 4:
-				# reset - dots1237
-				if MiniKey.Dot1 in liveKeys and MiniKey.Dot2 in liveKeys and MiniKey.Dot3 in liveKeys and MiniKey.Dot7 in liveKeys:
+				# reset - dots37
+				if MiniKey.Dot3 in liveKeys and MiniKey.Dot7 in liveKeys:
 					self.resetAction()
 
 		if len(liveKeys) == 1:
