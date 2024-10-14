@@ -235,12 +235,15 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 
 	# cleanup on exit (called by NVDA)
 	def terminate(self):
-		super().terminate()
-		for device in self.devices:
-			device.terminate()
-		if self.imageTimer is not None:
-			self.imageTimer.cancel()
-			self.imageTimer = None
+		try:
+			super().terminate()
+		finally:
+			if self.imageTimer is not None:
+				self.imageTimer.cancel()
+				self.imageTimer = None
+			log.info("## Terminate CadenceDisplayDriverWithImage")
+			for device in self.devices:
+				device.terminate()
 
 	# helper functions for screen size
 	def getDisplayWidth(self):

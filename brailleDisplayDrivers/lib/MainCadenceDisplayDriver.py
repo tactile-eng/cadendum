@@ -328,6 +328,8 @@ class CadenceDeviceDriver(HidBrailleDriver):
 	def setOneHanded(self, newOneHanded: bool):
 		if newOneHanded == self.isOneHanded:
 			return
+		if self.isTwoDevices():
+			return
 
 		report = HidFeatureReport(self._dev)
 		for valueCap in self.valueCapsList:
@@ -336,12 +338,23 @@ class CadenceDeviceDriver(HidBrailleDriver):
 					HID_USAGE_PAGE_BRAILLE,
 					valueCap.LinkCollection,
 					valueCap.u1.NotRange.Usage,
-					b"\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33\x33" if newOneHanded else b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+					b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" if newOneHanded else b"\xf4\x50\x4c\x74\xd1\x6e\xca\xa3\x8c\x4f\x5f\x0a\xd1\xa7\x5a\x29",
 				)
 
 		self._dev.setFeature(report.data)
 		self.isOneHanded = newOneHanded
 
+	# cleanup on exit (called by NVDA)
+	def terminate(self):
+		log.info("## MainCadenceDisplayDriver Terminate")
+		self.setOneHanded(True)
+		try:
+			super().terminate()
+		except Exception as e:
+			log.error(e)
+
+	def saveSettings(self):
+		pass
 
 # A driver for multiple devices connected simultaneously
 # This is the driver than NVDA sees, but actual communication with the device is delegated to CadenceDeviceDriver
