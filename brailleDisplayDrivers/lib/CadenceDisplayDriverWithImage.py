@@ -26,6 +26,7 @@ defaultZoomRate = 1.25
 zoomRateRate = 1.5
 bwThresholdOutOf = 100
 defaultBwThresholdRate = 7
+DOT_ASPECT_RATIO = 3.3 / 2.6
 
 def getScreenResolution():
 	screen = user32.GetDC(0)
@@ -153,6 +154,7 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 			True)
 		self.bwReversed = True
 		self.colorMode = 0
+		self.correctAspectRatio = True
 		
 		super().__init__(port)
 
@@ -255,11 +257,11 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 		self.centerX.set(left + toDrawWidth / 2)
 		self.centerY.set(-(top + toDrawHeight / 2))
 		if (self.zoomX.get() < 0 or self.zoomY.get() < 0):
-			fullZoom = min(2 / toDrawWidth, 2 / toDrawHeight * self.getDisplayHeight() / self.getDisplayWidth())
-			halfZoom = max(1 / toDrawWidth, 1 / toDrawHeight * self.getDisplayHeight() / self.getDisplayWidth())
+			fullZoom = min(2 / toDrawWidth, 2 / toDrawHeight / self.getTargetAspectRatio(self.correctAspectRatio))
+			halfZoom = max(1 / toDrawWidth, 1 / toDrawHeight / self.getTargetAspectRatio(self.correctAspectRatio))
 			zoom = max(halfZoom, fullZoom)
 			self.zoomX.set(zoom)
-			self.zoomY.set(zoom * self.getDisplayWidth() / self.getDisplayHeight())
+			self.zoomY.set(zoom * self.getTargetAspectRatio(self.correctAspectRatio))
 		self.lastLeft = left
 		self.lastTop = top
 		self.lastFitWidth = toDrawWidth
@@ -273,6 +275,9 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 		return ((graphX) - ((graphWidth) / 2)) / ((graphWidth) / 2) / self.zoomX.get() + self.centerX.get()
 	def screenYToVirtual(self, graphY, graphHeight):
 		return ((graphHeight - graphY) - ((graphHeight) / 2)) / ((graphHeight) / 2) / self.zoomY.get() + self.centerY.get()
+	
+	def getTargetAspectRatio(self, correct: bool):
+		return (self.getDisplayWidth()) / (self.getDisplayHeight()) * (DOT_ASPECT_RATIO if correct else 1)
 
 	# pan image
 	def pan(self, direction: Direction):
@@ -359,6 +364,12 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 		virtualWidth = self.screenXToVirtual(1, 1) - self.screenXToVirtual(0, 1)
 		self.centerX.set(1 - virtualWidth / 2)
 		self.displayImage()
+	def toggleAspectRatio(self):
+		self.correctAspectRatio = not self.correctAspectRatio
+		zoomY = self.zoomY.get()
+		zoomX = zoomY / self.getTargetAspectRatio(self.correctAspectRatio)
+		self.zoomX.set(zoomX)
+		self.displayImage()
 
 	def shouldBeOneHanded(self):
 		return False if self.displayingImage else super().shouldBeOneHanded()
@@ -429,6 +440,9 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 				# reset - dots37
 				if MiniKey.Dot3 in liveKeys and MiniKey.Dot7 in liveKeys:
 					self.resetAction()
+				# toggle correct aspect ratio
+				if MiniKey.Space in liveKeys and MiniKey.DPadCenter in liveKeys:
+					self.toggleAspectRatio()
 
 		if len(liveKeys) == 1:
 			if MiniKey.Row3 in liveKeys:
