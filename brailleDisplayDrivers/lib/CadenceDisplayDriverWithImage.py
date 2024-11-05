@@ -155,6 +155,7 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 		self.bwReversed = True
 		self.colorMode = 0
 		self.correctAspectRatio = True
+		self.followFocus = True
 		
 		super().__init__(port)
 
@@ -190,24 +191,27 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 			_immediate=True,
 		)
 	def actuallyDisplayImage(self, resetView = False):
-		obj = api.getNavigatorObject()
-		if obj is None:
-			log.info("no navigator object, switching to focus object")
-			obj = api.getFocusObject()
+		if not self.followFocus and self.lastLeft != -1 and self.lastTop != -1 and self.lastFitWidth != -1 and self.lastFitHeight != -1:
+			(left, top, width, height) = (self.lastLeft, self.lastTop, self.lastFitWidth, self.lastFitHeight)
+		else:
+			(self.lastLeft, self.lastTop, self.lastFitWidth, self.lastFitHeight) = (-1, -1, -1, -1)
+			obj = api.getNavigatorObject()
 			if obj is None:
-				log.error("no focus object")
+				log.info("no navigator object, switching to focus object")
+				obj = api.getFocusObject()
+				if obj is None:
+					log.error("no focus object")
+					self.doToggleImage()
+					return
+			while obj is not None and obj.location is None:
+				log.warn("object has no location, trying parent")
+				obj = obj.parent
+			if obj is None:
+				log.error("no location for object when displaying image")
 				self.doToggleImage()
 				return
-		self.prevObj = obj
-		while obj is not None and obj.location is None:
-			log.warn("object has no location, trying parent")
-			obj = obj.parent
-		if obj is None:
-			log.error("no location for object when displaying image")
-			self.doToggleImage()
-			return
-		location = obj.location
-		(left, top, width, height) = location
+			location = obj.location
+			(left, top, width, height) = location
 		log.info(f"######## screenshot {left} {top} {width} {height}")
 		if width <= 0 or height <= 0:
 			log.error("invalid object location")
@@ -369,6 +373,9 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 		zoomX = zoomY / self.getTargetAspectRatio(self.correctAspectRatio)
 		self.zoomX.set(zoomX)
 		self.displayImage()
+	def toggleFollowFocus(self):
+		self.followFocus = not self.followFocus
+		log.info(f"FOLLOW FOCUS {self.followFocus}")
 
 	def shouldBeOneHanded(self):
 		return False if self.displayingImage else super().shouldBeOneHanded()
@@ -414,6 +421,9 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 				# cycle color mode - dot1
 				elif MiniKey.Dot1 in liveKeys:
 					self.cycleColorMode()
+				# toggle follow focus
+				elif MiniKey.DPadCenter in liveKeys:
+					self.toggleFollowFocus()
 			elif len(liveKeys) == 2:
 				if MiniKey.Row1 in liveKeys or MiniKey.Row2 in liveKeys:
 					increase = (MiniKey.Row1 in liveKeys)
