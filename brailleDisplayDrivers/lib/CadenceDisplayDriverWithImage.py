@@ -256,12 +256,11 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 	def reset(self, left, top, toDrawWidth, toDrawHeight):
 		self.centerX.set(left + toDrawWidth / 2)
 		self.centerY.set(-(top + toDrawHeight / 2))
-		if (self.zoomX.get() < 0 or self.zoomY.get() < 0):
-			fullZoom = min(2 / toDrawWidth, 2 / toDrawHeight / self.getTargetAspectRatio(self.correctAspectRatio))
-			halfZoom = max(1 / toDrawWidth, 1 / toDrawHeight / self.getTargetAspectRatio(self.correctAspectRatio))
-			zoom = max(halfZoom, fullZoom)
-			self.zoomX.set(zoom)
-			self.zoomY.set(zoom * self.getTargetAspectRatio(self.correctAspectRatio))
+		fullZoom = min(2 / toDrawWidth, 2 / toDrawHeight / self.getTargetAspectRatio(self.correctAspectRatio))
+		halfZoom = max(1 / toDrawWidth, 1 / toDrawHeight / self.getTargetAspectRatio(self.correctAspectRatio))
+		zoom = max(halfZoom, fullZoom)
+		self.zoomX.set(zoom)
+		self.zoomY.set(zoom * self.getTargetAspectRatio(self.correctAspectRatio))
 		self.lastLeft = left
 		self.lastTop = top
 		self.lastFitWidth = toDrawWidth
