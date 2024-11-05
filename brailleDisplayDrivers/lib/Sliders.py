@@ -1,3 +1,5 @@
+import math
+
 # See SignalContainer in CadenceOS
 class SignalContainer():
 	def __init__(self, value: float):
@@ -45,7 +47,7 @@ class Slider():
 			else:
 				return math.log(value + 1) / math.log(2)
 		elif (self.sliderSCurve):
-			if (value > 1 or value < 0): return value
+			if (value >= 1 or value <= 0): return value
 			curvyness = 1.75
 			if (expOrLog):
 				return 1 / (1 + math.pow(value / (1 - value), -curvyness))
@@ -73,7 +75,7 @@ class Slider():
 
 		min = self.min.get()
 		quantize = self.quantize.get()
-		rounded = math.round((n - min) / quantize) * quantize + min
+		rounded = round((n - min) / quantize) * quantize + min
 
 		max = self.max.get()
 		if (self.strictMinMax):
