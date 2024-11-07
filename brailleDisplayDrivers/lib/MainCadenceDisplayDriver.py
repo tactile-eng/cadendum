@@ -641,14 +641,6 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 	def handleKeys(self, liveKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], composedKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]]):
 		log.info(f"## {liveKeysWithPosition} {composedKeysWithPosition}")
 
-		composedKeys = [key[0] for key in composedKeysWithPosition]
-
-		if len(composedKeys) == 1:
-			if MiniKey.Row1 in composedKeys or MiniKey.Row4 in composedKeys:
-				position = self.getDevPosition(composedKeysWithPosition[0][1])
-				isCurrentlyFlipped = position == DevPosition.TopLeft or position == DevPosition.TopRight
-				self.flipScreen(composedKeysWithPosition[0][1], (MiniKey.Row4 in composedKeys and not isCurrentlyFlipped) or (MiniKey.Row1 in composedKeys and isCurrentlyFlipped))
-
 	# map of device buttons to keyboard keys for non-image mode
 	gestureMap = inputCore.GlobalGestureMap(
 		{
