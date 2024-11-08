@@ -9,6 +9,7 @@ from brailleDisplayDrivers.lib.MainCadenceDisplayDriver import MainCadenceDispla
 
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 	def script_doToggleImage(self, gesture):
+		"""Toggle image mode (Cadence)"""
 		display = braille.handler.display
 		if isinstance(display, CadenceDisplayDriverWithImage):
 			display.doToggleImage()			
