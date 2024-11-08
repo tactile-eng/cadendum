@@ -194,7 +194,6 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 		if not self.followFocus and self.lastLeft != -1 and self.lastTop != -1 and self.lastFitWidth != -1 and self.lastFitHeight != -1:
 			(left, top, width, height) = (self.lastLeft, self.lastTop, self.lastFitWidth, self.lastFitHeight)
 		else:
-			(self.lastLeft, self.lastTop, self.lastFitWidth, self.lastFitHeight) = (-1, -1, -1, -1)
 			obj = api.getNavigatorObject()
 			if obj is None:
 				log.info("no navigator object, switching to focus object")
