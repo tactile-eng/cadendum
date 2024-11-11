@@ -13,6 +13,7 @@ from bdDetect import HID_USAGE_PAGE_BRAILLE
 from hwIo import hid
 import hidpi
 import hwPortUtils
+import brailleInput
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
@@ -109,13 +110,13 @@ rightKeys = {
 }
 
 # map keys for when device is upside-down
-flippedKeys = {
+upsideDownKeys = {
 	MiniKey.DPadUp: MiniKey.DPadDown,
 	MiniKey.DPadDown: MiniKey.DPadUp,
 	MiniKey.DPadLeft: MiniKey.DPadRight,
 	MiniKey.DPadRight: MiniKey.DPadLeft,
-	MiniKey.PanLeft: MiniKey.PanRight,
-	MiniKey.PanRight: MiniKey.PanLeft,
+	MiniKey.Space: MiniKey.PanLeft,
+	MiniKey.PanLeft: MiniKey.Space,
 	MiniKey.Row1: MiniKey.Row4,
 	MiniKey.Row2: MiniKey.Row3,
 	MiniKey.Row3: MiniKey.Row2,
@@ -129,6 +130,51 @@ flippedKeys = {
 	MiniKey.Dot7: MiniKey.Dot8,
 	MiniKey.Dot8: MiniKey.Dot7,
 }
+
+mirroredKeys = {
+	MiniKey.Dot1: MiniKey.Dot4,
+	MiniKey.Dot2: MiniKey.Dot5,
+	MiniKey.Dot3: MiniKey.Dot6,
+	MiniKey.Dot4: MiniKey.Dot1,
+	MiniKey.Dot5: MiniKey.Dot2,
+	MiniKey.Dot6: MiniKey.Dot3,
+	MiniKey.Dot7: MiniKey.Dot8,
+	MiniKey.Dot8: MiniKey.Dot7,
+}
+
+keyToNVDAName = {
+	MiniKey.DPadUp: "dpadUp",
+	MiniKey.DPadDown: "dpadDown",
+	MiniKey.DPadRight: "dpadRight",
+	MiniKey.DPadLeft: "dpadLeft",
+	MiniKey.DPadCenter: "dpadCenter",
+	MiniKey.PanRight: "panRight",
+	MiniKey.PanLeft: "panLeft",
+	MiniKey.Row1: "row1",
+	MiniKey.Row2: "row2",
+	MiniKey.Row3: "row3",
+	MiniKey.Row4: "row4",
+	MiniKey.Dot1: "dot1",
+	MiniKey.Dot2: "dot2",
+	MiniKey.Dot3: "dot3",
+	MiniKey.Dot4: "dot4",
+	MiniKey.Dot5: "dot5",
+	MiniKey.Dot6: "dot6",
+	MiniKey.Dot7: "dot7",
+	MiniKey.Dot8: "dot8",
+	MiniKey.Space: "space",
+}
+
+DOT_KEYS = [
+	MiniKey.Dot1,
+	MiniKey.Dot2,
+	MiniKey.Dot3,
+	MiniKey.Dot4,
+	MiniKey.Dot5,
+	MiniKey.Dot6,
+	MiniKey.Dot7,
+	MiniKey.Dot8,
+]
 
 # whether the device is a left type or right type
 class DevSide(Enum):
@@ -301,10 +347,7 @@ class CadenceDeviceDriver(HidBrailleDriver):
 
 	# handle button press
 	def _handleKeyRelease(self):
-		# TODO stop single-handed mode when there are multiple devices connected separately
-		if not self.displayDriver.shouldStopKeys():
-			# handle button press as a keyboard input
-			super()._handleKeyRelease()
+		pass
 
 	# is this actually two devices where the second one is connected to the first one through bluetooth
 	def isTwoDevices(self):
@@ -421,9 +464,6 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 		# initialize screen size
 		self.updateScreenSize()
 
-	def shouldStopKeys(self):
-		return False
-
 	# display on device (called by NVDA or manually in some cases)
 	def display(self, cells: list[int]):
 		# log.info(f"display {len(cells)} {self.numRows} {self.numCols}")
@@ -458,8 +498,8 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 	# flip keys if necessary due to device position
 	def rotateKey(self, key: MiniKey, pos: DevPosition) -> MiniKey:
 		if pos == DevPosition.TopLeft or pos == DevPosition.TopRight:
-			if key in flippedKeys:
-				return flippedKeys[key]
+			if key in upsideDownKeys:
+				return upsideDownKeys[key]
 		return key
 
 	# receive button press from device (called by CadenceDeviceDriver)
@@ -475,21 +515,16 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 						device = self.devices[devIndex]
 						devSides = device.getSides()
 						devSide = devSides[0]
-						if len(data) == 7:
+						if len(data) == 7 or (len(data) == 5 and devSide == DevSide.Right):
 							if index in rightKeys:
 								index = rightKeys[index]
-								devSide = devSides[1]
+								if len(data) == 7:
+									devSide = devSides[1]
 						key = MiniKey(index)
+						if len(data) == 5 and devSide == DevSide.Right:
+							if key in mirroredKeys:
+								key = mirroredKeys[key]
 						key = self.rotateKey(key, self.getDevPosition((devIndex, devSide)))
-						if len(data) == 5:
-							if key == MiniKey.Dot4:
-								key = MiniKey.Dot1
-							elif key == MiniKey.Dot5:
-								key = MiniKey.Dot2
-							elif key == MiniKey.Dot6:
-								key = MiniKey.Dot3
-							elif key == MiniKey.Dot8:
-								key = MiniKey.Dot7
 						if not key in keysDown:
 							keysDown.append((key, (devIndex, devSide)))
 			newKeys = [key for key in keysDown if key not in self.prevKeysDown]
@@ -634,6 +669,7 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 	def handleKeys(self, liveKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], composedKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]]):
 		log.info(f"## {liveKeysWithPosition} {composedKeysWithPosition}")
 
+		liveKeys = [key[0] for key in liveKeysWithPosition]
 		composedKeys = [key[0] for key in composedKeysWithPosition]
 
 		if len(composedKeys) == 1:
@@ -641,6 +677,14 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 				position = self.getDevPosition(composedKeysWithPosition[0][1])
 				isCurrentlyFlipped = position == DevPosition.TopLeft or position == DevPosition.TopRight
 				self.flipScreen(composedKeysWithPosition[0][1], (MiniKey.Row4 in composedKeys and not isCurrentlyFlipped) or (MiniKey.Row1 in composedKeys and isCurrentlyFlipped))
+
+		if len(composedKeys) > 0 and len(liveKeys) == 0:
+			gesture = MiniKeyInputGesture(composedKeys)
+			log.info(f"GESTURE {gesture.id} {gesture.keyNames} {gesture._get_identifiers()} {gesture._get_script()}")
+			try:
+				inputCore.manager.executeGesture(gesture)
+			except inputCore.NoInputGestureAction:
+				pass
 
 	# map of device buttons to keyboard keys for non-image mode
 	gestureMap = inputCore.GlobalGestureMap(
@@ -692,3 +736,20 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 			},
 		},
 	)
+
+class MiniKeyInputGesture(braille.BrailleDisplayGesture, brailleInput.BrailleInputGesture):
+	source = HidBrailleDriver.name
+
+	def __init__(self, keys: list[MiniKey]):
+		super().__init__()
+		self.keyCodes = set(keys)
+		self.keyNames = [keyToNVDAName[key] for key in keys]
+
+		if all([key in DOT_KEYS + [MiniKey.Space] for key in keys]):
+			self.space = MiniKey.Space in keys
+			self.dots = 0
+			for key in keys:
+				if key in DOT_KEYS:
+					self.dots |= 1 << DOT_KEYS.index(key)
+		
+		self.id = "+".join(self.keyNames)

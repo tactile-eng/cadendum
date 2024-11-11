@@ -159,9 +159,6 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 		
 		super().__init__(port)
 
-	def shouldStopKeys(self):
-		return self.displayingImage
-	
 	def display(self, cells: list[int], isImage = False):
 		if not isImage:
 			self.lastDisplayedNonImage = cells
@@ -390,7 +387,8 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 
 	# handle keys
 	def handleKeys(self, liveKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], composedKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]]):
-		super().handleKeys(liveKeysWithPosition, composedKeysWithPosition)
+		if not self.displayingImage:
+			super().handleKeys(liveKeysWithPosition, composedKeysWithPosition)
 
 		liveKeys = [key[0] for key in liveKeysWithPosition]
 
