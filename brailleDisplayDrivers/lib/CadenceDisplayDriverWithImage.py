@@ -451,10 +451,6 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 				if MiniKey.Space in liveKeys and MiniKey.DPadCenter in liveKeys:
 					self.toggleAspectRatio()
 
-		if len(liveKeys) == 1:
-			if MiniKey.Row3 in liveKeys:
-				self.doToggleImage()
-
 class TestCadenceDisplayDriver(MainCadenceDisplayDriver):
 	def __init__(self, port):
 		super().__init__(port)
