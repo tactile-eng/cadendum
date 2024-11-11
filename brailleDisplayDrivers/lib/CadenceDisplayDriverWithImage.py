@@ -387,7 +387,8 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 
 	# handle keys
 	def handleKeys(self, liveKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], composedKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], gesture: MiniKeyInputGesture | None):
-		if not self.displayingImage or (gesture is not None and gesture._get_script().__name__ == "script_doToggleImage"):
+		gestureScript = gesture._get_script() if gesture is not None else None
+		if not self.displayingImage or (gestureScript is not None and gestureScript.__name__ == "script_doToggleImage"):
 			super().handleKeys(liveKeysWithPosition, composedKeysWithPosition, gesture)
 
 		liveKeys = [key[0] for key in liveKeysWithPosition]
