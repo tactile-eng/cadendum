@@ -386,9 +386,9 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 			self.restoreNonImage()
 
 	# handle keys
-	def handleKeys(self, liveKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], composedKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]]):
+	def handleKeys(self, liveKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], composedKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], isKeyGesture: bool):
 		if not self.displayingImage:
-			super().handleKeys(liveKeysWithPosition, composedKeysWithPosition)
+			super().handleKeys(liveKeysWithPosition, composedKeysWithPosition, isKeyGesture)
 
 		liveKeys = [key[0] for key in liveKeysWithPosition]
 

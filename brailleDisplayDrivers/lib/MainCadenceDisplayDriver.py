@@ -434,6 +434,7 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 		self.liveKeys = []
 		self.composedKeys = []
 		self.devices = []
+		self.keyGestureHandled = False
 
 		# check for USB devices
 		for devMatch in self._getTryPorts("usb"):
@@ -544,7 +545,15 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 					if not key in self.composedKeys:
 						self.composedKeys.append(key)
 
-			self.handleKeys(self.liveKeys, self.composedKeys)
+			if len(newKeys) > 0:
+				self.keyGestureHandled = False
+
+			isKeyGesture = not self.keyGestureHandled and len(newKeys) == 0 and len(keysUp) > 0
+
+			self.handleKeys(self.liveKeys, self.composedKeys, isKeyGesture)
+
+			if isKeyGesture:
+				self.keyGestureHandled = True
 
 			if end:
 				self.composedKeys = []
@@ -666,7 +675,7 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 		self.afterDevicePositionsChanged()
 
 	# handle keys
-	def handleKeys(self, liveKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], composedKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]]):
+	def handleKeys(self, liveKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], composedKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], isKeyGesture: bool):
 		log.info(f"## {liveKeysWithPosition} {composedKeysWithPosition}")
 
 		liveKeys = [key[0] for key in liveKeysWithPosition]
@@ -678,8 +687,8 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 				isCurrentlyFlipped = position == DevPosition.TopLeft or position == DevPosition.TopRight
 				self.flipScreen(composedKeysWithPosition[0][1], (MiniKey.Row4 in composedKeys and not isCurrentlyFlipped) or (MiniKey.Row1 in composedKeys and isCurrentlyFlipped))
 
-		if len(composedKeys) > 0 and len(liveKeys) == 0:
-			gesture = MiniKeyInputGesture(composedKeys)
+		if isKeyGesture:
+			gesture = MiniKeyInputGesture(composedKeys + liveKeys)
 			log.info(f"GESTURE {gesture.id} {gesture.keyNames} {gesture._get_identifiers()} {gesture._get_script()}")
 			try:
 				inputCore.manager.executeGesture(gesture)
