@@ -258,8 +258,10 @@ class CadenceDeviceDriver(HidBrailleDriver):
 		self.isOneHanded = not self.isTwoDevices()
 
 		# detect left or right
-		if "product" in port.deviceInfo and port.deviceInfo["product"] in ["Cadence-R", "Cadence-L"]:
-			self.isRight = port.deviceInfo["product"] == "Cadence-R"
+		if "product" in port.deviceInfo and port.deviceInfo["product"].startswith("Cadence-"):
+			self.isRight = port.deviceInfo["product"].startswith("Cadence-R")
+			self.devName = port.deviceInfo["product"]
+			log.info(f"USB {self.isRight} {self.devName}")
 		else:
 			self.isRight = None
 			for g_hdi, idd, devinfo, buf in hwPortUtils._listDevices(hwPortUtils._hidGuid, True):
@@ -271,7 +273,7 @@ class CadenceDeviceDriver(HidBrailleDriver):
 
 					name = getName(parent2, g_hdi)
 
-					log.info(f"name {name}")
+					self.devName = name
 
 					if name.startswith("Cadence-L"):
 						self.isRight = False
@@ -280,19 +282,24 @@ class CadenceDeviceDriver(HidBrailleDriver):
 					else:
 						raise Exception(f"improper device name {name}")
 
+					log.info(f"BLUETOOTH {name} {self.isRight}")
+
 			if self.isRight is None:
 				raise Exception("unable to find device for checking if isRight")
 
 		log.info(f"isRight {self.isRight}")
 
 		# auto-select whether device is flipped based on whether another device is currently in non-flipped position
-		currentPositionsOccupied = [device.getPosition(side) for device in self.displayDriver.devices for side in device.getSides()]
-		self.isFlipped: dict[DevSide, bool] = {}
+		self.isFlipped = False
 		for side in self.getSides():
-			self.isFlipped[side] = False
 			unflippedPos = self.getPosition(side)
-			if unflippedPos in currentPositionsOccupied:
-				self.isFlipped[side] = True
+			for otherDevice in self.displayDriver.devices:
+				for otherDeviceSide in otherDevice.getSides():
+					if otherDevice.getPosition(otherDeviceSide) == unflippedPos and self.isFlipped == False:
+						if self.devName < otherDevice.devName:
+							otherDevice.isFlipped = True
+						else:
+							self.isFlipped = True
 
 	# received button press (called by superclass)
 	def _hidOnReceive(self, data: bytes):
@@ -322,7 +329,7 @@ class CadenceDeviceDriver(HidBrailleDriver):
 
 	# get position of device
 	def getPosition(self, side: DevSide) -> DevPosition:
-		flipped = self.isFlipped[side]
+		flipped = self.isFlipped
 		return getDevicePosition(side, flipped)
 
 	def setOneHanded(self, newOneHanded: bool):
@@ -633,14 +640,6 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 	# handle keys
 	def handleKeys(self, liveKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], composedKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]]):
 		log.info(f"## {liveKeysWithPosition} {composedKeysWithPosition}")
-
-		composedKeys = [key[0] for key in composedKeysWithPosition]
-
-		if len(composedKeys) == 1:
-			if MiniKey.Row1 in composedKeys or MiniKey.Row4 in composedKeys:
-				position = self.getDevPosition(composedKeysWithPosition[0][1])
-				isCurrentlyFlipped = position == DevPosition.TopLeft or position == DevPosition.TopRight
-				self.flipScreen(composedKeysWithPosition[0][1], (MiniKey.Row4 in composedKeys and not isCurrentlyFlipped) or (MiniKey.Row1 in composedKeys and isCurrentlyFlipped))
 
 	# map of device buttons to keyboard keys for non-image mode
 	gestureMap = inputCore.GlobalGestureMap(
