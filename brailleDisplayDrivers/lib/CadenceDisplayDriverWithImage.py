@@ -6,7 +6,7 @@ import threading
 import ctypes
 from enum import Enum
 import queueHandler
-from brailleDisplayDrivers.lib.MainCadenceDisplayDriver import MainCadenceDisplayDriver, MiniKey, imageToCells, DevSide
+from brailleDisplayDrivers.lib.MainCadenceDisplayDriver import MainCadenceDisplayDriver, MiniKey, imageToCells, DevSide, MiniKeyInputGesture
 from brailleDisplayDrivers.lib.Sliders import Slider, CombinedSlider, PanSlider
 
 user32 = ctypes.windll.user32
@@ -386,9 +386,9 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 			self.restoreNonImage()
 
 	# handle keys
-	def handleKeys(self, liveKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], composedKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], isKeyGesture: bool):
-		if not self.displayingImage:
-			super().handleKeys(liveKeysWithPosition, composedKeysWithPosition, isKeyGesture)
+	def handleKeys(self, liveKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], composedKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], gesture: MiniKeyInputGesture | None):
+		if not self.displayingImage or (gesture is not None and gesture._get_script().__name__ == "script_doToggleImage"):
+			super().handleKeys(liveKeysWithPosition, composedKeysWithPosition, gesture)
 
 		liveKeys = [key[0] for key in liveKeysWithPosition]
 

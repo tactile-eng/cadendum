@@ -26,4 +26,5 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 	__gestures={
 		"kb:NVDA+I": "doToggleImage",
 		"kb:NVDA+Y": "cycleDevPositions",
+		"br(hidBrailleStandard):space+dot2+dot4": "doToggleImage",
 	}

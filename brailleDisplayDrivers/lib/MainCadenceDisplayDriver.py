@@ -266,6 +266,23 @@ class HidFeatureReport(hid.HidOutputReport):
 		self._reportBuf = ctypes.c_buffer(self._reportSize)
 		self._reportBuf[0] = 0
 
+class MiniKeyInputGesture(braille.BrailleDisplayGesture, brailleInput.BrailleInputGesture):
+	source = HidBrailleDriver.name
+
+	def __init__(self, keys: list[MiniKey]):
+		super().__init__()
+		self.keyCodes = set(keys)
+		self.keyNames = [keyToNVDAName[key] for key in keys]
+
+		if all([key in DOT_KEYS + [MiniKey.Space] for key in keys]):
+			self.space = MiniKey.Space in keys
+			self.dots = 0
+			for key in keys:
+				if key in DOT_KEYS:
+					self.dots |= 1 << DOT_KEYS.index(key)
+		
+		self.id = "+".join(self.keyNames)
+
 # Represents either a single device or a pair of two devices (where the second one is bluetooth connected to the first one)
 # Isn't visible to NVDA, see CadenceDisplayDriver
 class CadenceDeviceDriver(HidBrailleDriver):
@@ -548,11 +565,15 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 			if len(newKeys) > 0:
 				self.keyGestureHandled = False
 
-			isKeyGesture = not self.keyGestureHandled and len(newKeys) == 0 and len(keysUp) > 0
+			gesture = None
+			if not self.keyGestureHandled and len(newKeys) == 0 and len(keysUp) > 0:
+				liveKeys = [key[0] for key in self.liveKeys]
+				composedKeys = [key[0] for key in self.composedKeys]
+				gesture = MiniKeyInputGesture(composedKeys + liveKeys)
 
-			self.handleKeys(self.liveKeys, self.composedKeys, isKeyGesture)
+			self.handleKeys(self.liveKeys, self.composedKeys, gesture)
 
-			if isKeyGesture:
+			if gesture is not None:
 				self.keyGestureHandled = True
 
 			if end:
@@ -675,10 +696,9 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 		self.afterDevicePositionsChanged()
 
 	# handle keys
-	def handleKeys(self, liveKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], composedKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], isKeyGesture: bool):
+	def handleKeys(self, liveKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], composedKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], gesture: MiniKeyInputGesture | None):
 		log.info(f"## {liveKeysWithPosition} {composedKeysWithPosition}")
 
-		liveKeys = [key[0] for key in liveKeysWithPosition]
 		composedKeys = [key[0] for key in composedKeysWithPosition]
 
 		if len(composedKeys) == 1:
@@ -687,8 +707,7 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 				isCurrentlyFlipped = position == DevPosition.TopLeft or position == DevPosition.TopRight
 				self.flipScreen(composedKeysWithPosition[0][1], (MiniKey.Row4 in composedKeys and not isCurrentlyFlipped) or (MiniKey.Row1 in composedKeys and isCurrentlyFlipped))
 
-		if isKeyGesture:
-			gesture = MiniKeyInputGesture(composedKeys + liveKeys)
+		if gesture is not None:
 			log.info(f"GESTURE {gesture.id} {gesture.keyNames} {gesture._get_identifiers()} {gesture._get_script()}")
 			try:
 				inputCore.manager.executeGesture(gesture)
@@ -745,20 +764,3 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 			},
 		},
 	)
-
-class MiniKeyInputGesture(braille.BrailleDisplayGesture, brailleInput.BrailleInputGesture):
-	source = HidBrailleDriver.name
-
-	def __init__(self, keys: list[MiniKey]):
-		super().__init__()
-		self.keyCodes = set(keys)
-		self.keyNames = [keyToNVDAName[key] for key in keys]
-
-		if all([key in DOT_KEYS + [MiniKey.Space] for key in keys]):
-			self.space = MiniKey.Space in keys
-			self.dots = 0
-			for key in keys:
-				if key in DOT_KEYS:
-					self.dots |= 1 << DOT_KEYS.index(key)
-		
-		self.id = "+".join(self.keyNames)
