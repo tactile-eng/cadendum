@@ -246,6 +246,18 @@ class CadenceDeviceDriver(HidBrailleDriver):
 		self.displayDriver = displayDriver
 		self.devIndex = devIndex
 
+		if self.numRows == 1:
+			# workaround for old firmware
+			if self.numCols == 48:
+				self.numRows = 4
+				self.numCols = 12
+			elif self.numCols == 96:
+				self.numRows = 4
+				self.numCols = 24
+		
+		if self.numRows != 4 or not (self.numCols == 12 or self.numCols == 24):
+			raise Exception("unknown screen size")
+
 		self.valueCapsList = (hidpi.HIDP_VALUE_CAPS * self._dev.caps.NumberFeatureValueCaps)()
 		numValueCaps = ctypes.c_long(self._dev.caps.NumberFeatureValueCaps)
 		hid.check_HidP_status(
