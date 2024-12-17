@@ -246,13 +246,16 @@ class CadenceDeviceDriver(HidBrailleDriver):
 		self.displayDriver = displayDriver
 		self.devIndex = devIndex
 
-		if self.numRows == 1:
+		self.actualNumRows = self.numRows
+		self.actualNumCols = self.numCols
+
+		if self.actualNumRows == 1:
 			# workaround for old firmware
-			if self.numCols == 48:
-				self.numRows = 4
-				self.numCols = 12
+			if self.actualNumCols == 48:
+				self.actualNumRows = 4
+				self.actualNumCols = 12
 		
-		if self.numRows != 4 or not (self.numCols == 12 or self.numCols == 24):
+		if self.actualNumRows != 4 or not (self.actualNumCols == 12 or self.actualNumCols == 24):
 			raise Exception("unknown screen size")
 
 		self.valueCapsList = (hidpi.HIDP_VALUE_CAPS * self._dev.caps.NumberFeatureValueCaps)()
@@ -324,7 +327,7 @@ class CadenceDeviceDriver(HidBrailleDriver):
 
 	# is this actually two devices where the second one is connected to the first one through bluetooth
 	def isTwoDevices(self):
-		return self.numCols > 12
+		return self.actualNumCols > 12
 
 	# get list of device sides (left or right, or both if the second one is connected to the first one through bluetooth)
 	def getSides(self) -> list[DevSide]:
