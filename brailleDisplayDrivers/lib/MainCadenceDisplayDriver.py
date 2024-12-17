@@ -251,9 +251,6 @@ class CadenceDeviceDriver(HidBrailleDriver):
 			if self.numCols == 48:
 				self.numRows = 4
 				self.numCols = 12
-			elif self.numCols == 96:
-				self.numRows = 4
-				self.numCols = 24
 		
 		if self.numRows != 4 or not (self.numCols == 12 or self.numCols == 24):
 			raise Exception("unknown screen size")
