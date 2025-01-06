@@ -6,7 +6,7 @@ import threading
 import ctypes
 from enum import Enum
 import queueHandler
-from brailleDisplayDrivers.lib.MainCadenceDisplayDriver import MainCadenceDisplayDriver, MiniKey, imageToCells, DevSide
+from brailleDisplayDrivers.lib.MainCadenceDisplayDriver import MainCadenceDisplayDriver, MiniKey, imageToCells, DevSide, MiniKeyInputGesture, DOT_KEYS
 from brailleDisplayDrivers.lib.Sliders import Slider, CombinedSlider, PanSlider
 
 user32 = ctypes.windll.user32
@@ -159,9 +159,6 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 		
 		super().__init__(port)
 
-	def shouldStopKeys(self):
-		return self.displayingImage
-	
 	def display(self, cells: list[int], isImage = False):
 		if not isImage:
 			self.lastDisplayedNonImage = cells
@@ -181,7 +178,6 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 			if self.imageTimer is not None:
 				self.imageTimer.cancel()
 				self.imageTimer = None
-		self.updateOneHanded()
 
 	# draw image mode (screencapture of current navigator object)
 	def displayImage(self, resetView = False):
@@ -376,9 +372,6 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 		self.followFocus = not self.followFocus
 		log.info(f"FOLLOW FOCUS {self.followFocus}")
 
-	def shouldBeOneHanded(self):
-		return False if self.displayingImage else super().shouldBeOneHanded()
-
 	# run after changing device positions to update screens
 	def afterDevicePositionsChanged(self):
 		super().afterDevicePositionsChanged()
@@ -388,10 +381,16 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 			self.restoreNonImage()
 
 	# handle keys
-	def handleKeys(self, liveKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], composedKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]]):
-		super().handleKeys(liveKeysWithPosition, composedKeysWithPosition)
-
+	def handleKeys(self, liveKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], composedKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], gesture: MiniKeyInputGesture | None):
 		liveKeys = [key[0] for key in liveKeysWithPosition]
+		composedKeys = [key[0] for key in self.composedKeys]
+		allKeys = liveKeys + composedKeys
+
+		if not self.displayingImage and gesture is not None:
+			log.info(f"{allKeys} {[key in [MiniKey.Space] + DOT_KEYS for key in allKeys]}")
+
+		if not self.displayingImage or all([key in [MiniKey.Space] + DOT_KEYS for key in allKeys]):
+			super().handleKeys(liveKeysWithPosition, composedKeysWithPosition, gesture)
 
 		if self.displayingImage:
 			if len(liveKeys) == 1:
@@ -409,17 +408,6 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 					self.zoom(True)
 				elif MiniKey.PanLeft in liveKeys:
 					self.zoom(False)
-				# increase threshold - dot7, decrease threshold - dot3
-				elif MiniKey.Dot7 in liveKeys:
-					self.changeThreshold(True)
-				elif MiniKey.Dot3 in liveKeys:
-					self.changeThreshold(False)
-				# reverse threshold - dot2
-				elif MiniKey.Dot2 in liveKeys:
-					self.reverseThreshold()
-				# cycle color mode - dot1
-				elif MiniKey.Dot1 in liveKeys:
-					self.cycleColorMode()
 				# toggle follow focus
 				elif MiniKey.DPadCenter in liveKeys:
 					self.toggleFollowFocus()
@@ -432,8 +420,8 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 					# zoom faster - row1 + pan, zoom slower - row2 + pan
 					elif MiniKey.PanLeft in liveKeys or MiniKey.PanRight in liveKeys:
 						self.changeZoomRate(increase)
-					# threshold faster - row1 + dot2, threshold slower row2 + dot2
-					elif MiniKey.Dot2 in liveKeys:
+					# threshold faster - row1 + row3, threshold slower row2 + row3
+					elif MiniKey.Row3 in liveKeys:
 						self.changeThresholdRate(increase)
 				# pan to edge - space + arrow or (up - space + dots123, down - space + dots 456, left - space + dots23, right - space + dots56)
 				if MiniKey.Space in liveKeys:
@@ -445,16 +433,26 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 						self.panEdgeLeft()
 					elif MiniKey.DPadRight in liveKeys:
 						self.panEdgeRight()
-				# reset - dots37
-				if MiniKey.Dot3 in liveKeys and MiniKey.Dot7 in liveKeys:
+				# increase threshold - row3 + up, decrease threshold - row3 + down
+				if MiniKey.Row3 in liveKeys:
+					if MiniKey.DPadUp in liveKeys:
+						self.changeThreshold(True)
+					elif MiniKey.DPadDown in liveKeys:
+						self.changeThreshold(False)
+				# reset - row 34
+				if MiniKey.Row3 in liveKeys and MiniKey.Row4 in liveKeys:
 					self.resetAction()
 				# toggle correct aspect ratio
 				if MiniKey.Space in liveKeys and MiniKey.DPadCenter in liveKeys:
 					self.toggleAspectRatio()
+			elif len(liveKeys) == 0 and len(composedKeys) == 1:
+				# reverse threshold - row3
+				if MiniKey.Row3 in composedKeys:
+					self.reverseThreshold()
+				# cycle color mode - row4
+				elif MiniKey.Row4 in liveKeys:
+					self.cycleColorMode()
 
-		if len(liveKeys) == 1:
-			if MiniKey.Row3 in liveKeys:
-				self.doToggleImage()
 
 class TestCadenceDisplayDriver(MainCadenceDisplayDriver):
 	def __init__(self, port):
