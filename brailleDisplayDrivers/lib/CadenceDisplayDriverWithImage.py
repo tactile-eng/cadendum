@@ -391,6 +391,8 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 
 		if not self.displayingImage or all([key in [MiniKey.Space] + DOT_KEYS for key in allKeys]):
 			super().handleKeys(liveKeysWithPosition, composedKeysWithPosition, gesture)
+		else:
+			log.info(f"## {liveKeysWithPosition} {composedKeysWithPosition}")
 
 		if self.displayingImage:
 			if len(liveKeys) == 1:

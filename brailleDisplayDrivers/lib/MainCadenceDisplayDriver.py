@@ -541,7 +541,7 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 
 	# receive button press from device (called by CadenceDeviceDriver)
 	def _hidOnReceive(self, data: bytes, devIndex: int):
-		# log.info("# data: " + " ".join([f"{b:0>8b}" for b in data]))
+		log.info("# data: " + " ".join([f"{b:0>8b}" for b in data]))
 		if len(data) == 5 or len(data) == 7:
 			keysDown = [key for key in self.prevKeysDown if key[1][0] != devIndex]
 			for byteI, byte in enumerate(data):
