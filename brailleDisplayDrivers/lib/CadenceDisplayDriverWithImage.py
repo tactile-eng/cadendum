@@ -393,7 +393,7 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 			super().handleKeys(liveKeysWithPosition, composedKeysWithPosition, gesture)
 
 		if self.displayingImage:
-			if len(liveKeys) == 1:
+			if len(liveKeys) == 1 and len(composedKeys) == 0:
 				# pan - arrow keys
 				if MiniKey.DPadUp in liveKeys:
 					self.pan(Direction.Up)
@@ -411,7 +411,7 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 				# toggle follow focus
 				elif MiniKey.DPadCenter in liveKeys:
 					self.toggleFollowFocus()
-			elif len(liveKeys) == 2:
+			elif len(liveKeys) == 2 and len(composedKeys) == 0:
 				if MiniKey.Row1 in liveKeys or MiniKey.Row2 in liveKeys:
 					increase = (MiniKey.Row1 in liveKeys)
 					# pan faster - row1 + arrow, pan slower - row2 + arrow
@@ -450,7 +450,7 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 				if MiniKey.Row3 in composedKeys:
 					self.reverseThreshold()
 				# cycle color mode - row4
-				elif MiniKey.Row4 in liveKeys:
+				elif MiniKey.Row4 in composedKeys:
 					self.cycleColorMode()
 
 
