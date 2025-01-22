@@ -403,11 +403,6 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 					self.pan(Direction.Left)
 				elif MiniKey.DPadRight in liveKeys:
 					self.pan(Direction.Right)
-				# zoom in - pan right, zoom out - pan left
-				elif MiniKey.PanRight in liveKeys:
-					self.zoom(True)
-				elif MiniKey.PanLeft in liveKeys:
-					self.zoom(False)
 				# toggle follow focus
 				elif MiniKey.DPadCenter in liveKeys:
 					self.toggleFollowFocus()
@@ -433,8 +428,8 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 						self.panEdgeLeft()
 					elif MiniKey.DPadRight in liveKeys:
 						self.panEdgeRight()
-				# increase threshold - row3 + up, decrease threshold - row3 + down
-				if MiniKey.Row3 in liveKeys:
+				# increase threshold - ctrl + up, decrease threshold - ctrl + down
+				if any([(key[0] == MiniKey.PanRight and key[1][1] == DevSide.Left) or (key[0] == MiniKey.PanLeft and key[1][1] == DevSide.Right) for key in liveKeysWithPosition]):
 					if MiniKey.DPadUp in liveKeys:
 						self.changeThreshold(True)
 					elif MiniKey.DPadDown in liveKeys:
@@ -446,8 +441,13 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 				if MiniKey.Space in liveKeys and MiniKey.DPadCenter in liveKeys:
 					self.toggleAspectRatio()
 			elif len(liveKeys) == 0 and len(composedKeys) == 1:
+				# zoom in - pan right, zoom out - pan left
+				if MiniKey.PanRight in composedKeys:
+					self.zoom(True)
+				elif MiniKey.PanLeft in composedKeys:
+					self.zoom(False)
 				# reverse threshold - row3
-				if MiniKey.Row3 in composedKeys:
+				elif MiniKey.Row3 in composedKeys:
 					self.reverseThreshold()
 				# cycle color mode - row4
 				elif MiniKey.Row4 in composedKeys:
