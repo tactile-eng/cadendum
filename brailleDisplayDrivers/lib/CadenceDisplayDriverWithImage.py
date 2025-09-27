@@ -66,7 +66,7 @@ def bitmapToImage(bitmap, width: int, height: int, bwThreshold: float, bwReverse
 # a timer that repeatedly runs a function every n seconds
 # https://stackoverflow.com/questions/12435211/threading-timer-repeat-function-every-n-seconds
 class RunInterval(threading.Thread):
-	def __init__(self, callback, interval = 1):
+	def __init__(self, callback, interval = 1.0):
 		super().__init__()
 		self.callback = callback
 		self.interval = interval
