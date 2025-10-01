@@ -28,7 +28,7 @@ for i, char in enumerate(BRAILLE_COMPUTER_CODE):
 def backTranslate(text: list[int]):
 	out = ""
 	for braille_char in text:
-		out += BRAILLE_LOOKUP[braille_char] or "?"
+		out += BRAILLE_LOOKUP[braille_char] if braille_char in BRAILLE_LOOKUP else "?"
 	return out
 
 class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
@@ -39,6 +39,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 	showFixedColumnHeader: bool
 	showFixedRowHeader: bool
 	panHorizontal: int
+	blink: bool
 
 	def __init__(self, port):
 		self.displayingTable = False
@@ -48,6 +49,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		self.showFixedColumnHeader = True
 		self.showFixedRowHeader = True
 		self.panHorizontal = 0
+		self.blink = True
 
 		super().__init__(port)
 
@@ -59,9 +61,10 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		self.displayingTable = not self.displayingTable
 
 		if self.displayingTable:
+			self.blink = True
 			self.displayTable()
 			if self.tableTimer is None:
-				self.tableTimer = RunInterval(self.displayTable, 0.5)
+				self.tableTimer = RunInterval(self.toggleBlinkAndDisplayTable, 0.5)
 				self.tableTimer.start()
 		else:
 			self.restoreNonTable()
@@ -69,6 +72,9 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 				self.tableTimer.cancel()
 				self.tableTimer = None
 
+	def toggleBlinkAndDisplayTable(self):
+		self.blink = not self.blink
+		self.displayTable()
 
 	def doToggleImage(self):
 		if self.displayingTable:
@@ -181,7 +187,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 
 		log.info(f"{table_obj} {cell_obj} {row} {col} {tableWidth} {tableHeight}")
 
-		self.draw(table_obj, tableWidth, tableHeight, max(row - 1, 0) if self.showFixedColumnHeader else row, col)
+		self.draw(table_obj, tableWidth, tableHeight, row, col)
 
 	"""
 	 * Information on how large table is, how many headers, where data is scrolled
@@ -316,7 +322,8 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 	 * draw on device
 	 * @group Table - Internals
 	"""
-	def draw(self, table_obj, tableWidth, tableHeight, deviceTableTop, deviceActiveColumn):
+	def draw(self, table_obj, tableWidth, tableHeight, deviceActiveRow, deviceActiveColumn):
+		deviceTableTop = max(deviceActiveRow - 1, 0) if self.showFixedColumnHeader else deviceActiveRow
 		rowsColsNumbers = self.getRowsColsWithHeaders(tableWidth, tableHeight, deviceTableTop, deviceActiveColumn)
 		# populate data (ascii)
 		rowsColsUntranslated = []
@@ -383,6 +390,10 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 				if colI != 0:
 					line.append(0)
 				fitted = self.fitTextEntry(text, colWidths[colI], self.panHorizontal if colI == cursorColI else 0, -1 if rowsColsNumbers[rowI][colI].row == None else rowsColsNumbers[rowI][colI].row, -1 if rowsColsNumbers[rowI][colI].col == None else rowsColsNumbers[rowI][colI].col)
+				if self.blink:
+					cellPos = rowsColsNumbers[rowI][colI]
+					if cellPos.col == deviceActiveColumn and cellPos.row == deviceActiveRow:
+						fitted[0] += 2**6 + 2**7
 				line += fitted
 			line = line[:self.numCols]
 			while len(line) < self.numCols:
@@ -398,7 +409,29 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		self.display(lines, False, True)
 
 	def moveTable(self, direction):
-		pass
+		log.info("moveTable")
+		# table_info = self.getTableInfo()
+		# if table_info == None:
+		# 	log.warn("move table when not in table")
+		# 	return
+
+		# table_obj, cell_obj, row, col = table_info
+
+		# tableWidth, tableHeight = self.getTableSize(table_obj)
+
+		# if direction == Direction.Up:
+		# 	row = max(row - 1, 0)
+		# elif direction == Direction.Down:
+		# 	row = min(row + 1, tableHeight - 1)
+		# elif direction == Direction.Left:
+		# 	col = max(col - 1, 0)
+		# elif direction == Direction.Right:
+		# 	col = min(col + 1, tableWidth - 1)
+		
+		# new_focus = self.getCell(table_obj, row, col)
+		# api.setNavigatorObject(new_focus)
+
+		# self.displayTable()
 
 	# run after changing device positions to update screens
 	def afterDevicePositionsChanged(self):
