@@ -7,8 +7,10 @@ from braille import NVDAObjectRegion, TextRegion
 from collections import namedtuple
 import math
 from brailleDisplayDrivers.lib.MainCadenceDisplayDriver import MiniKey, DevSide, MiniKeyInputGesture, DOT_KEYS
+from NVDAObjects import NVDAObject
 
 rowCol = namedtuple("rowcol", ["row", "col"])
+savedTableInfo = namedtuple("savedTableInfo", ["table_obj", "width", "height", "row", "col"])
 maxColHeaderChars = 4
 
 BRAILLE_COMPUTER_CODE = [
@@ -40,6 +42,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 	showFixedRowHeader: bool
 	panHorizontal: int
 	blink: bool
+	tableState: savedTableInfo | None
 
 	def __init__(self, port):
 		self.displayingTable = False
@@ -50,6 +53,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		self.showFixedRowHeader = True
 		self.panHorizontal = 0
 		self.blink = True
+		self.tableState = None
 
 		super().__init__(port)
 
@@ -62,6 +66,8 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 
 		if self.displayingTable:
 			self.blink = True
+			self.tableState = None
+
 			self.displayTable()
 			if self.tableTimer is None:
 				self.tableTimer = RunInterval(self.toggleBlinkAndDisplayTable, 0.5)
@@ -111,12 +117,22 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 			log.info("## Terminate CadenceDisplayDriverWithTable")
 
 	def getCell(self, table, row, col):
+		if table == None or table.children == None:
+			log.warn("invalid table for getCell")
+			return None
 		row_obj = table.children[row]
 		if row_obj is None:
 			return None
 		return row_obj.children[col]
 
 	def getTableInfo(self):
+		if self.tableState != None:
+			cell_obj = self.getCell(self.tableState.table_obj, self.tableState.row, self.tableState.col)
+			if cell_obj != None:
+				return self.tableState.table_obj, cell_obj, self.tableState.row, self.tableState.col, self.tableState.width, self.tableState.height
+			else:
+				log.error("table changed")
+
 		obj = api.getNavigatorObject()
 		if obj is None:
 			log.info("no navigator object, switching to focus object")
@@ -147,23 +163,24 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		else:
 			row = 0
 			col = 0
+		
+		tableHeight = len(table_obj.children)
+		tableWidth = max([len(row.children) for row in table_obj.children])
+
+		self.tableState = savedTableInfo(table_obj=table_obj, width=tableWidth, height=tableHeight, row=row, col=col)
+
 		cell_obj = self.getCell(table_obj, row, col)
 		if cell_obj == None:
 			log.error(f"unable to get cell {row} {col}")
 			return None
 
+
 		log.info(f"table: {table_obj} {table_obj.name}")
 		log.info(f"cell: {cell_obj} {cell_obj.name}")
 		log.info(f"pos: {row} {col}")
 
-		return table_obj, cell_obj, row, col
+		return table_obj, cell_obj, row, col, tableWidth, tableHeight
 	
-	def getTableSize(self, table_obj):
-		tableHeight = len(table_obj.children)
-		tableWidth = max([len(row.children) for row in table_obj.children])
-
-		return tableWidth, tableHeight
-
 	def displayText(self, text):
 		region = TextRegion(text)
 		region.update()
@@ -181,9 +198,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 			self.displayText("not in table")
 			return
 
-		table_obj, cell_obj, row, col = table_info
-
-		tableWidth, tableHeight = self.getTableSize(table_obj)
+		table_obj, cell_obj, row, col, tableWidth, tableHeight = table_info
 
 		log.info(f"{table_obj} {cell_obj} {row} {col} {tableWidth} {tableHeight}")
 
@@ -410,28 +425,49 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 
 	def moveTable(self, direction):
 		log.info("moveTable")
-		# table_info = self.getTableInfo()
-		# if table_info == None:
-		# 	log.warn("move table when not in table")
-		# 	return
-
-		# table_obj, cell_obj, row, col = table_info
-
-		# tableWidth, tableHeight = self.getTableSize(table_obj)
-
-		# if direction == Direction.Up:
-		# 	row = max(row - 1, 0)
-		# elif direction == Direction.Down:
-		# 	row = min(row + 1, tableHeight - 1)
-		# elif direction == Direction.Left:
-		# 	col = max(col - 1, 0)
-		# elif direction == Direction.Right:
-		# 	col = min(col + 1, tableWidth - 1)
+		table_info = self.tableState
+		if table_info == None:
+			log.warn("move table when not in table")
+			return
 		
-		# new_focus = self.getCell(table_obj, row, col)
-		# api.setNavigatorObject(new_focus)
+		row = table_info.row
+		col = table_info.col
 
-		# self.displayTable()
+		if direction == Direction.Up:
+			row = max(row - 1, 0)
+		elif direction == Direction.Down:
+			row = min(row + 1, table_info.height - 1)
+		elif direction == Direction.Left:
+			col = max(col - 1, 0)
+		elif direction == Direction.Right:
+			col = min(col + 1, table_info.width - 1)
+		
+		self.tableState = savedTableInfo(table_obj=table_info.table_obj, width=table_info.width, height=table_info.height, row=row, col=col)
+
+		self.displayTable()
+
+	def navigateToTableCell(self):
+		log.info("navigateToTableCell")
+		queueHandler.queueFunction(
+			queueHandler.eventQueue,
+			lambda : self.actuallyNavigateToTableCell(),
+			_immediate=True,
+		)
+
+	def actuallyNavigateToTableCell(self):
+		log.info("actuallyNavigateToTableCell")
+		table_info = self.tableState
+		if table_info == None:
+			log.warn("actuallyNavigateToTableCell when not in table")
+			return
+
+		cell = self.getCell(table_info.table_obj, table_info.row, table_info.col)
+		if cell != None:
+			api.setNavigatorObject(cell)
+
+			self.doToggleTable()
+		else:
+			log.error("unable to get cell for actuallyNavigateToTableCell")
 
 	# run after changing device positions to update screens
 	def afterDevicePositionsChanged(self):
@@ -461,3 +497,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 					self.moveTable(Direction.Left)
 				elif MiniKey.DPadRight in liveKeys:
 					self.moveTable(Direction.Right)
+			elif len(liveKeys) == 0 and len(composedKeys) == 1:
+				# navigate to cell - center
+				if MiniKey.DPadCenter in composedKeys:
+					self.navigateToTableCell()
