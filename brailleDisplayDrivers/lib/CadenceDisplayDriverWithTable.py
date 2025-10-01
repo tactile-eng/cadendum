@@ -1,4 +1,4 @@
-from brailleDisplayDrivers.lib.CadenceDisplayDriverWithImage import CadenceDisplayDriverWithImage, RunInterval
+from brailleDisplayDrivers.lib.CadenceDisplayDriverWithImage import CadenceDisplayDriverWithImage, RunInterval, Direction
 from logHandler import log
 import queueHandler
 import api
@@ -6,6 +6,7 @@ import controlTypes
 from braille import NVDAObjectRegion, TextRegion
 from collections import namedtuple
 import math
+from brailleDisplayDrivers.lib.MainCadenceDisplayDriver import MiniKey, DevSide, MiniKeyInputGesture, DOT_KEYS
 
 rowCol = namedtuple("rowcol", ["row", "col"])
 maxColHeaderChars = 4
@@ -150,19 +151,33 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		log.info(f"pos: {row} {col}")
 
 		return table_obj, cell_obj, row, col
+	
+	def getTableSize(self, table_obj):
+		tableHeight = len(table_obj.children)
+		tableWidth = max([len(row.children) for row in table_obj.children])
+
+		return tableWidth, tableHeight
+
+	def displayText(self, text):
+		region = TextRegion(text)
+		region.update()
+		braille = region.brailleCells
+		braille = braille[:(self.numRows * self.numCols)]
+		while len(braille) < self.numRows * self.numCols:
+			braille.append(0)
+		self.display(braille, False, True)
 
 	def actuallyDisplayTable(self, resetView = False):
 		log.info(f"######## actuallyDisplayTable")
 
 		table_info = self.getTableInfo()
 		if table_info == None:
-			self.doToggleTable()
+			self.displayText("not in table")
 			return
 
 		table_obj, cell_obj, row, col = table_info
 
-		tableHeight = len(table_obj.children)
-		tableWidth = max([len(row.children) for row in table_obj.children])
+		tableWidth, tableHeight = self.getTableSize(table_obj)
 
 		log.info(f"{table_obj} {cell_obj} {row} {col} {tableWidth} {tableHeight}")
 
@@ -325,6 +340,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		rowsColsTranslated = self.translateRows(rowsColsUntranslated)
 		# return if no data
 		if len(rowsColsTranslated) == 0:
+			self.displayText("empty table")
 			return
 		# calculate width of each column using maximum text length
 		numCols = len(rowsColsTranslated[0])
@@ -337,6 +353,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		cursorColIs = [i for i, col in enumerate(rowsColsNumbers[0]) if col.col == deviceActiveColumn]
 		if len(cursorColIs) != 1:
 			log.error("unknown error - unable to find cursor column")
+			self.displayText("table error")
 			return
 		cursorColI = cursorColIs[0]
 		log.info(f"cursorColI: {cursorColI}")
@@ -379,3 +396,35 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		# display lines
 		# self.display.moveCursor(cursorColX, 0)
 		self.display(lines, False, True)
+
+	def moveTable(self, direction):
+		pass
+
+	# run after changing device positions to update screens
+	def afterDevicePositionsChanged(self):
+		super().afterDevicePositionsChanged()
+		if self.displayingTable:
+			self.displayTable(True)
+		else:
+			self.restoreNonTable()
+
+	# handle keys
+	def handleKeys(self, liveKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], composedKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], gesture: MiniKeyInputGesture | None):
+		liveKeys = [key[0] for key in liveKeysWithPosition]
+		composedKeys = [key[0] for key in self.composedKeys]
+		allKeys = liveKeys + composedKeys
+
+		if not self.displayingTable or all([key in [MiniKey.Space] + DOT_KEYS for key in allKeys]):
+			super().handleKeys(liveKeysWithPosition, composedKeysWithPosition, gesture)
+
+		if self.displayingTable:
+			if len(liveKeys) == 1 and len(composedKeys) == 0:
+				# move - arrow keys
+				if MiniKey.DPadUp in liveKeys:
+					self.moveTable(Direction.Up)
+				elif MiniKey.DPadDown in liveKeys:
+					self.moveTable(Direction.Down)
+				elif MiniKey.DPadLeft in liveKeys:
+					self.moveTable(Direction.Left)
+				elif MiniKey.DPadRight in liveKeys:
+					self.moveTable(Direction.Right)
