@@ -332,6 +332,12 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		# log.info(f"fit: {text}")
 		return text
 
+	def columnNumberToLetters(self, colNum, res = ""):
+		# https://stackoverflow.com/questions/23861680/convert-spreadsheet-number-to-column-letter
+		if colNum > 0:
+			return self.columnNumberToLetters(math.floor((colNum - 1) / 26), "abcdefghijklmnopqrstuvwxyz"[(colNum - 1) % 26] + res)
+		else:
+			return res
 
 	"""
 	 * draw on device
@@ -497,7 +503,19 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 					self.moveTable(Direction.Left)
 				elif MiniKey.DPadRight in liveKeys:
 					self.moveTable(Direction.Right)
+			elif len(liveKeys) == 2 and len(composedKeys) == 0:
+				if MiniKey.Space in liveKeys:
+					if MiniKey.DPadUp in liveKeys:
+						self.showFixedColumnHeader = not self.showFixedColumnHeader
+						self.displayTable()
+					elif MiniKey.DPadLeft in liveKeys:
+						self.showFixedRowHeader = not self.showFixedRowHeader
+						self.displayTable()
+					elif MiniKey.DPadCenter in liveKeys:
+						self.showCellPositionsDevice = not self.showCellPositionsDevice
+						self.displayTable()
 			elif len(liveKeys) == 0 and len(composedKeys) == 1:
 				# navigate to cell - center
 				if MiniKey.DPadCenter in composedKeys:
 					self.navigateToTableCell()
+
