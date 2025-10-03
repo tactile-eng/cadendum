@@ -44,6 +44,9 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 	blink: bool
 	maxPanHorizontal = 0
 
+	columnHeaderTextToStrip: list[int]
+	rowHeaderTextToStrip: list[int]
+
 	def __init__(self, port):
 		self.displayingTable = False
 		self.tableTimer = None
@@ -53,6 +56,13 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		self.showFixedRowHeader = True
 		self.panHorizontal = 0
 		self.blink = True
+
+		columnHeaderTextToStripRegion = TextRegion(" column header")
+		columnHeaderTextToStripRegion.update()
+		self.columnHeaderTextToStrip = columnHeaderTextToStripRegion.brailleCells
+		rowHeaderTextToStripRegion = TextRegion(" row header")
+		rowHeaderTextToStripRegion.update()
+		self.rowHeaderTextToStrip = rowHeaderTextToStripRegion.brailleCells
 
 		super().__init__(port)
 
@@ -328,6 +338,16 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 			return self.columnNumberToLetters(math.floor((colNum - 1) / 26), "abcdefghijklmnopqrstuvwxyz"[(colNum - 1) % 26] + res)
 		else:
 			return res
+	
+	def endsWithBraille(self, brailleText: list[int], checkEndsWidth: list[int]):
+		if len(brailleText) < len(checkEndsWidth):
+			return False
+
+		for i, letter in enumerate(checkEndsWidth):
+			checkAgainst = brailleText[i + len(brailleText) - len(checkEndsWidth)]
+			if letter != checkAgainst:
+				return False
+		return True
 
 	"""
 	 * draw on device
@@ -356,6 +376,24 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 			rowsColsUntranslated.append(rowUntranslated)
 		# translate
 		rowsColsTranslated = self.translateRows(rowsColsUntranslated)
+		# strip " column header" / " row header"
+		hasColumnHeaderText = True
+		hasRowHeaderText = True
+		for rowI, rowTranslated in enumerate(rowsColsTranslated):
+			for colI, translated in enumerate(rowTranslated):
+				pos = rowsColsNumbers[rowI][colI]
+				if pos.row == 0 and pos.col != 0 and not self.endsWithBraille(translated, self.columnHeaderTextToStrip):
+					hasColumnHeaderText = False
+				if pos.col == 0 and pos.row != 0 and not self.endsWithBraille(translated, self.rowHeaderTextToStrip):
+					hasRowHeaderText = False
+		for rowI, rowTranslated in enumerate(rowsColsTranslated):
+			for colI, translated in enumerate(rowTranslated):
+				pos = rowsColsNumbers[rowI][colI]
+				if hasColumnHeaderText and pos.row == 0 and self.endsWithBraille(translated, self.columnHeaderTextToStrip):
+					rowsColsTranslated[rowI][colI] = translated[:-len(self.columnHeaderTextToStrip)]
+				if hasRowHeaderText and pos.col == 0 and self.endsWithBraille(translated, self.rowHeaderTextToStrip):
+					rowsColsTranslated[rowI][colI] = translated[:-len(self.rowHeaderTextToStrip)]
+		log.info(f"rowsColsTranslated stripped: {[[backTranslate(cell) for cell in row] for row in rowsColsTranslated]}")
 		# return if no data
 		if len(rowsColsTranslated) == 0:
 			self.displayText("empty table")
