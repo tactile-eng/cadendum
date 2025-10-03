@@ -42,6 +42,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 	showFixedRowHeader: bool
 	panHorizontal: int
 	blink: bool
+	maxPanHorizontal = 0
 
 	def __init__(self, port):
 		self.displayingTable = False
@@ -64,6 +65,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 
 		if self.displayingTable:
 			self.blink = True
+			self.panHorizontal = 0
 
 			self.displayTable()
 			if self.tableTimer is None:
@@ -393,11 +395,13 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		log.info(f"colWidths 3: {colWidths}")
 		# write data into lines
 		lines = []
+		newMaxPanHorizontal = 0
 		for rowI, row in enumerate(rowsColsTranslated):
 			line = []
 			for colI, text in enumerate(row):
 				if colI != 0:
 					line.append(0)
+				newMaxPanHorizontal = max(newMaxPanHorizontal, math.ceil(len(text) / colWidths[colI]) - 1, 0)
 				fitted = self.fitTextEntry(text, colWidths[colI], self.panHorizontal if colI == cursorColI else 0, -1 if rowsColsNumbers[rowI][colI].row == None else rowsColsNumbers[rowI][colI].row, -1 if rowsColsNumbers[rowI][colI].col == None else rowsColsNumbers[rowI][colI].col)
 				if self.blink:
 					cellPos = rowsColsNumbers[rowI][colI]
@@ -409,6 +413,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 				line.append(0)
 			lines += line
 			log.info(f"line: {backTranslate(line)}")
+		self.maxPanHorizontal = newMaxPanHorizontal
 		
 		while len(lines) < self.numRows * self.numCols:
 			lines.append(0)
@@ -517,4 +522,9 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 				# navigate to cell - center
 				if MiniKey.DPadCenter in composedKeys:
 					self.navigateToTableCell()
-
+				elif MiniKey.PanLeft in composedKeys:
+					self.panHorizontal = max(self.panHorizontal - 1, 0)
+					self.displayTable()
+				elif MiniKey.PanRight in composedKeys:
+					self.panHorizontal = min(self.panHorizontal + 1, self.maxPanHorizontal)
+					self.displayTable()
