@@ -42,7 +42,6 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 	showFixedRowHeader: bool
 	panHorizontal: int
 	blink: bool
-	tableState: savedTableInfo | None
 
 	def __init__(self, port):
 		self.displayingTable = False
@@ -53,7 +52,6 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		self.showFixedRowHeader = True
 		self.panHorizontal = 0
 		self.blink = True
-		self.tableState = None
 
 		super().__init__(port)
 
@@ -66,7 +64,6 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 
 		if self.displayingTable:
 			self.blink = True
-			self.tableState = None
 
 			self.displayTable()
 			if self.tableTimer is None:
@@ -126,13 +123,6 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		return row_obj.children[col]
 
 	def getTableInfo(self):
-		if self.tableState != None:
-			cell_obj = self.getCell(self.tableState.table_obj, self.tableState.row, self.tableState.col)
-			if cell_obj != None:
-				return self.tableState.table_obj, cell_obj, self.tableState.row, self.tableState.col, self.tableState.width, self.tableState.height
-			else:
-				log.error("table changed")
-
 		obj = api.getNavigatorObject()
 		if obj is None:
 			log.info("no navigator object, switching to focus object")
@@ -166,8 +156,6 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		
 		tableHeight = len(table_obj.children)
 		tableWidth = max([len(row.children) for row in table_obj.children])
-
-		self.tableState = savedTableInfo(table_obj=table_obj, width=tableWidth, height=tableHeight, row=row, col=col)
 
 		cell_obj = self.getCell(table_obj, row, col)
 		if cell_obj == None:
@@ -431,26 +419,37 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 
 	def moveTable(self, direction):
 		log.info("moveTable")
-		table_info = self.tableState
+		queueHandler.queueFunction(
+			queueHandler.eventQueue,
+			lambda : self.actuallyMoveTable(direction),
+			_immediate=True,
+		)
+
+	def actuallyMoveTable(self, direction):
+		table_info = self.getTableInfo()
 		if table_info == None:
 			log.warn("move table when not in table")
 			return
 		
-		row = table_info.row
-		col = table_info.col
+		table_obj, cell_obj, row, col, tableWidth, tableHeight = table_info
 
 		if direction == Direction.Up:
 			row = max(row - 1, 0)
 		elif direction == Direction.Down:
-			row = min(row + 1, table_info.height - 1)
+			row = min(row + 1, tableHeight - 1)
 		elif direction == Direction.Left:
 			col = max(col - 1, 0)
 		elif direction == Direction.Right:
-			col = min(col + 1, table_info.width - 1)
+			col = min(col + 1, tableWidth - 1)
 		
-		self.tableState = savedTableInfo(table_obj=table_info.table_obj, width=table_info.width, height=table_info.height, row=row, col=col)
+		new_cell = self.getCell(table_obj, row, col)
+		if new_cell == None:
+			log.error("improperly sized table")
+			return
 
-		self.displayTable()
+		api.setNavigatorObject(new_cell)
+
+		self.actuallyDisplayTable()
 
 	def navigateToTableCell(self):
 		log.info("navigateToTableCell")
