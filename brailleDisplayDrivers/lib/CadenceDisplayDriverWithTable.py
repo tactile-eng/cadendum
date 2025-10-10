@@ -8,6 +8,7 @@ from collections import namedtuple
 import math
 from brailleDisplayDrivers.lib.MainCadenceDisplayDriver import MiniKey, DevSide, MiniKeyInputGesture, DOT_KEYS
 from NVDAObjects import NVDAObject
+from NVDAObjects.window.excel import ExcelWorksheet, ExcelCell
 
 rowCol = namedtuple("rowcol", ["row", "col"])
 savedTableInfo = namedtuple("savedTableInfo", ["table_obj", "width", "height", "row", "col"])
@@ -125,14 +126,92 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 				self.tableTimer = None
 			log.info("## Terminate CadenceDisplayDriverWithTable")
 
+	def getCellRowDirectly(self, cell):
+		row_num = None
+		try:
+			row_num = cell._get_rowNumber()
+		except NotImplementedError:
+			pass
+		if row_num != None:
+			return row_num - 1
+		return None
+
+	def getCellColDirectly(self, cell):
+		col_num = None
+		try:
+			col_num = cell._get_columnNumber()
+		except NotImplementedError:
+			pass
+		if col_num != None:
+			return col_num - 1
+		return None
+	
+	def isCorrectCell(self, cell, row, col):
+		if cell.role == controlTypes.ROLE_TABLECELL or cell.role == controlTypes.ROLE_TABLECOLUMNHEADER or cell.role == controlTypes.ROLE_TABLEROWHEADER:
+			row_num = self.getCellRowDirectly(cell)
+			col_num = self.getCellColDirectly(cell)
+			if row_num == row and col_num == col:
+				return True
+		return False
+
 	def getCell(self, table, row, col):
-		if table == None or table.children == None:
-			log.warn("invalid table for getCell")
+		if isinstance(table, ExcelWorksheet):
+			cell=table.excelWorksheetObject.cells(row + 1,col + 1) 
+			return ExcelCell(windowHandle=table.windowHandle,excelWindowObject=table.excelWindowObject,excelCellObject=cell)
+
+		row_obj = table.firstChild
+		row_i = 0
+
+		while row_obj != None:
+			if self.isCorrectCell(row_obj, row, col):
+				return row_obj
+			
+			row_num = self.getCellRowDirectly(row_obj)
+			if row_num == None:
+				row_num = row_i
+
+			if row_num == row:
+				col_obj = row_obj.firstChild
+				col_i = 0
+
+				while col_obj != None:
+					if self.isCorrectCell(col_obj, row, col):
+						return col_obj
+
+					col_num = self.getCellColDirectly(col_obj)
+					if col_num == None:
+						col_num = row_i
+					
+					if col_num == col:
+						return col_obj
+					elif col_num > col:
+						return None
+					
+					col_i += 1
+					col_obj = col_obj.next
+
+				return None
+			elif row_num > row:
+				return None
+			
+			row_i += 1
+			row_obj = row_obj.next
+
+		return None
+
+	def getIndexInParent(self, findChild):
+		try:
+			return findChild._get_indexInParent()
+		except NotImplementedError:
+			parent = findChild.parent
+			child = parent.firstChild
+			i = 0
+			while child != None:
+				if child == findChild:
+					return i
+				i += 1
+				child = child.next
 			return None
-		row_obj = table.children[row]
-		if row_obj is None:
-			return None
-		return row_obj.children[col]
 
 	def getTableInfo(self):
 		obj = api.getNavigatorObject()
@@ -142,32 +221,76 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 			if obj is None:
 				log.error("no focus object")
 				return None
+		
+		log.info(f"looking for role (table={controlTypes.ROLE_TABLE} row={controlTypes.ROLE_TABLEROW} col={controlTypes.ROLE_TABLECOLUMN} cell={controlTypes.ROLE_TABLECELL} colheader={controlTypes.ROLE_TABLECOLUMNHEADER} rowheader={controlTypes.ROLE_TABLEROWHEADER})")
 
 		table_search_obj = obj
-		index_stack = []
+		cell_obj = None
+		obj_stack = []
 		while table_search_obj.parent != None and table_search_obj.role != controlTypes.ROLE_TABLE:
-			log.info(f"search {table_search_obj.name} {table_search_obj.role} {table_search_obj.table}")
-			try: 
-				index_stack.append(table_search_obj.indexInParent)
-				table_search_obj = table_search_obj.parent
-			except NotImplementedError:
-				log.warn("NotImplementedError")
-				return None
-
+			if table_search_obj.role == controlTypes.ROLE_TABLECELL:
+				cell_obj = table_search_obj
+			log.info(f"search {table_search_obj.name} {table_search_obj.role}")
+			obj_stack.append(table_search_obj)
+			table_search_obj = table_search_obj.parent
+		
 		if table_search_obj.role != controlTypes.ROLE_TABLE:
 			log.error("unable to find table")
 			return None
 
 		table_obj = table_search_obj
-		if len(index_stack) >= 2:
-			row = index_stack[-1]
-			col = index_stack[-2]
-		else:
-			row = 0
-			col = 0
+		log.info(f"found {table_obj.name} {table_obj.role} {table_obj}")
+
+		row = None
+		col = None
+		if cell_obj != None:
+			row = self.getCellRowDirectly(cell_obj)
+			col = self.getCellColDirectly(cell_obj)
+		if row == None or col == None:
+			log.info("table row/col not implemented")
+			if len(obj_stack) >= 2:
+				row = self.getIndexInParent(obj_stack[-1])
+				col = self.getIndexInParent(obj_stack[-2])
+			if row == None or col == None:
+				row = 0
+				col = 0
+		log.info(f"{obj_stack} {row} {col}")
 		
-		tableHeight = len(table_obj.children)
-		tableWidth = max([len(row.children) for row in table_obj.children])
+		log.info("finding table size")
+		tableHeight = 0
+		tableWidth = 0
+		if isinstance(table_obj, ExcelWorksheet):
+			tableWidth = None
+			tableHeight = None
+		else:
+			try:
+				tableWidth = table_obj._get_columnCount()
+				tableHeight = table_obj._get_rowCount()
+			except NotImplementedError:
+				log.info("table width/height not implemented")
+				row_obj = table_obj.firstChild
+				while row_obj != None and tableHeight != None and tableWidth != None:
+					tableHeight += 1
+					if tableHeight > 50:
+						tableHeight = None
+						tableWidth = None
+						break
+					thisRowWidth = 0
+					col_obj = row_obj.firstChild
+					while col_obj != None and tableHeight != None and tableWidth != None:
+						thisRowWidth += 1
+						if thisRowWidth > 50:
+							tableHeight = None
+							tableWidth = None
+							break
+						col_obj = col_obj.next
+					if tableWidth == None:
+						break
+					tableWidth = max(tableWidth, thisRowWidth)
+					row_obj = row_obj.next
+		
+		if tableHeight == None or tableWidth == None:
+			log.warn("large table")
 
 		cell_obj = self.getCell(table_obj, row, col)
 		if cell_obj == None:
@@ -252,11 +375,11 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		rows = []
 		for rowI in range(numRows):
 			row = rowI + rowStart
-			if row < tableHeight:
+			if tableHeight == None or row < tableHeight:
 				rowCols = []
 				for colI in range(numCols):
 					col = colI + colStart
-					if col < tableWidth:
+					if tableWidth == None or col < tableWidth:
 						rowCols.append(rowCol(row=row, col=col))
 				rows.append(rowCols)
 		log.info(f"getRowsColsWithoutHeaders: {rows}")
@@ -305,12 +428,15 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		for rowUntranslated in rowsColsUntranslated:
 			rowTranslated = []
 			for untranslated in rowUntranslated:
-				if type(untranslated) == str:
-					region = TextRegion(untranslated)
+				if untranslated == None:
+					rowTranslated.append([])
 				else:
-					region = NVDAObjectRegion(untranslated)
-				region.update()
-				rowTranslated.append(region.brailleCells)
+					if type(untranslated) == str:
+						region = TextRegion(untranslated)
+					else:
+						region = NVDAObjectRegion(untranslated)
+					region.update()
+					rowTranslated.append(region.brailleCells)
 			rowsColsTranslated.append(rowTranslated)
 		log.info(f"rowsColsTranslated: {[[backTranslate(cell) for cell in row] for row in rowsColsTranslated]}")
 		return rowsColsTranslated
@@ -374,6 +500,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 					data = self.getCell(table_obj, row, col)
 				rowUntranslated.append(data)
 			rowsColsUntranslated.append(rowUntranslated)
+		log.info(f"names: {[[(None if cell == None else (cell if type(cell) == str else cell.name)) for cell in row] for row in rowsColsUntranslated]}")
 		# translate
 		rowsColsTranslated = self.translateRows(rowsColsUntranslated)
 		# strip " column header" / " row header"
@@ -479,11 +606,17 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		if direction == Direction.Up:
 			row = max(row - 1, 0)
 		elif direction == Direction.Down:
-			row = min(row + 1, tableHeight - 1)
+			if tableHeight != None:
+				row = min(row + 1, tableHeight - 1)
+			else:
+				row = row + 1
 		elif direction == Direction.Left:
 			col = max(col - 1, 0)
 		elif direction == Direction.Right:
-			col = min(col + 1, tableWidth - 1)
+			if tableWidth != None:
+				col = min(col + 1, tableWidth - 1)
+			else:
+				col = col + 1
 		
 		new_cell = self.getCell(table_obj, row, col)
 		if new_cell == None:
