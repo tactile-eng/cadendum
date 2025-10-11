@@ -475,6 +475,14 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 				return False
 		return True
 
+	def getExcelCellPositionBraille(self, cell, translated):
+		address_region = TextRegion(cell._get_cellCoordsText())
+		address_region.update()
+		address_braille = address_region.brailleCells
+		if len(translated) > len(address_braille):
+			address_braille = [0] + address_braille
+		return address_braille
+
 	"""
 	 * draw on device
 	 * @group Table - Internals
@@ -520,6 +528,22 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 					rowsColsTranslated[rowI][colI] = translated[:-len(self.columnHeaderTextToStrip)]
 				if hasRowHeaderText and pos.col == 0 and self.endsWithBraille(translated, self.rowHeaderTextToStrip):
 					rowsColsTranslated[rowI][colI] = translated[:-len(self.rowHeaderTextToStrip)]
+		# strip position info
+		hasPositionText = True
+		for rowI, rowTranslated in enumerate(rowsColsTranslated):
+			for colI, translated in enumerate(rowTranslated):
+				untranslated = rowsColsUntranslated[rowI][colI]
+				if isinstance(untranslated, ExcelCell):
+					address_braille = self.getExcelCellPositionBraille(untranslated, translated)
+					if not self.endsWithBraille(translated, address_braille):
+						hasPositionText = False
+		if hasPositionText:
+			for rowI, rowTranslated in enumerate(rowsColsTranslated):
+				for colI, translated in enumerate(rowTranslated):
+					untranslated = rowsColsUntranslated[rowI][colI]
+					if isinstance(untranslated, ExcelCell):
+						address_braille = self.getExcelCellPositionBraille(untranslated, translated)
+						rowsColsTranslated[rowI][colI] = translated[:-len(address_braille)]
 		log.info(f"rowsColsTranslated stripped: {[[backTranslate(cell) for cell in row] for row in rowsColsTranslated]}")
 		# return if no data
 		if len(rowsColsTranslated) == 0:
