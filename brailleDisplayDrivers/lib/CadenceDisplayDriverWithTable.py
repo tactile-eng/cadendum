@@ -619,7 +619,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		self.display(lines, False, True)
 
 	def moveTable(self, direction, page=False):
-		log.info("moveTable")
+		log.info(f"moveTable {direction} {page}")
 		queueHandler.queueFunction(
 			queueHandler.eventQueue,
 			lambda : self.actuallyMoveTable(direction, page),
@@ -627,12 +627,15 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		)
 
 	def actuallyMoveTable(self, direction, page=False):
+		log.info(f"actuallyMoveTable {direction} {page}")
 		table_info = self.getTableInfo()
 		if table_info == None:
 			log.warn("move table when not in table")
 			return
 		
 		table_obj, cell_obj, row, col, tableWidth, tableHeight = table_info
+
+		log.info(f"initial pos {row} {col}")
 
 		if page:
 			layout_info = self.getTableLayoutInfo(row, col)
@@ -657,13 +660,19 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 				col = min(col + amount, tableWidth - 1)
 			else:
 				col = col + amount
-		
+
+		log.info(f"new pos {row} {col}")
+
 		new_cell = self.getCell(table_obj, row, col)
 		if new_cell == None:
 			log.error("improperly sized table")
 			return
 
+		log.info(f"setting navigator object")
+
 		api.setNavigatorObject(new_cell)
+
+		log.info(f"set navigator object")
 
 		self.actuallyDisplayTable()
 
