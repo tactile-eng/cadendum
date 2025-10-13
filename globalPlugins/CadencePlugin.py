@@ -29,5 +29,5 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		"kb:NVDA+I": "doToggleImage",
 		"br(hidBrailleStandard):space+dot2+dot4": "doToggleImage",
 		"kb:NVDA+G": "doToggleTable",
-		"br(hidBrailleStandard):space+dot2+dot3+dot4+dot5": "doToggleTable",
+		"br(hidBrailleStandard):space+dot1+dot2+dot4+dot5": "doToggleTable",
 	}
