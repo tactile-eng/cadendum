@@ -51,6 +51,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 	panHorizontal: int
 	blink: bool
 	maxPanHorizontal = 0
+	lastTableTop: tuple[int, NVDAObject] | None
 
 	columnHeaderTextToStrip: list[int]
 	rowHeaderTextToStrip: list[int]
@@ -64,6 +65,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		self.showFixedRowHeader = True
 		self.panHorizontal = 0
 		self.blink = True
+		self.lastTableTop = None
 
 		columnHeaderTextToStripRegion = TextRegion(" column header")
 		columnHeaderTextToStripRegion.update()
@@ -304,7 +306,6 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 			log.error(f"unable to get cell {row} {col}")
 			return None
 
-
 		log.info(f"table: {table_obj} {table_obj.name}")
 		log.info(f"cell: {cell_obj} {cell_obj.name}")
 		log.info(f"pos: {row} {col}")
@@ -339,8 +340,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 	 * @param isDevice true if is for device, false for GUI
 	 * @returns table layout info
 	"""
-	def getTableLayoutInfo(self, deviceActiveRow, deviceActiveColumn):
-		deviceTableTop = max(deviceActiveRow - 1, 0) if self.showFixedColumnHeader else deviceActiveRow
+	def getTableLayoutInfo(self, deviceActiveRow, deviceActiveColumn, table_obj):
 		showCellPositions = self.showCellPositionsDevice
 		showColumnHeaders = self.showFixedColumnHeader and not showCellPositions
 		showRowHeaders = self.showFixedRowHeader and not showCellPositions
@@ -352,9 +352,27 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		numColsWithoutHeaders = numColsTotal - numColsHeaders
 		rowScrollOffset = 1 if showColumnHeaders else 0
 		colScrollOffset = 0 if showRowHeaders else 0
+		if self.lastTableTop != None and table_obj == self.lastTableTop[1]:
+			if deviceActiveRow < numRowsHeaders:
+				deviceTableTop = self.lastTableTop[0]
+				log.info(f"in headers {deviceTableTop}")
+			else:
+				distanceFromTop = deviceActiveRow - (self.lastTableTop[0] + rowScrollOffset)
+				log.info(f"moving table top {distanceFromTop} {math.floor(distanceFromTop / numRowsWithoutHeaders)*numRowsWithoutHeaders}")
+				if distanceFromTop < 0:
+					deviceTableTop = max(self.lastTableTop[0] + math.floor(distanceFromTop / numRowsWithoutHeaders)*numRowsWithoutHeaders, 0)
+				else:
+					deviceTableTop = min(self.lastTableTop[0] + math.floor(distanceFromTop / numRowsWithoutHeaders)*numRowsWithoutHeaders, deviceActiveRow - rowScrollOffset)
+		else:
+			deviceTableTop = max(math.floor((deviceActiveRow - rowScrollOffset) / numRowsWithoutHeaders) * numRowsWithoutHeaders, 0)
+			log.info(f"no lastTableTop {math.floor((deviceActiveRow - rowScrollOffset) / numRowsWithoutHeaders)}")
+		
+		self.lastTableTop = (deviceTableTop, table_obj)
+
 		rowStartWithoutHeaders = (deviceTableTop) + rowScrollOffset
 		colStartWithoutHeaders = (1 if deviceActiveColumn == 0 and showRowHeaders else deviceActiveColumn) + colScrollOffset
 		tableInfo = {
+			"deviceTableTop": deviceTableTop,
 			"showCellPositions": showCellPositions,
 			"showColumnHeaders": showColumnHeaders,
 			"showRowHeaders": showRowHeaders,
@@ -400,8 +418,8 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 	 * @returns the data
 	 * @group Table - Internals
 	"""
-	def getRowsColsWithHeaders(self, tableWidth, tableHeight, deviceActiveRow, deviceActiveColumn):
-		layoutInfo = self.getTableLayoutInfo(deviceActiveRow, deviceActiveColumn)
+	def getRowsColsWithHeaders(self, tableWidth, tableHeight, deviceActiveRow, deviceActiveColumn, table_obj):
+		layoutInfo = self.getTableLayoutInfo(deviceActiveRow, deviceActiveColumn, table_obj)
 		rowsCols = self.getRowsColsWithoutHeaders(
 			tableWidth,
 			tableHeight,
@@ -496,7 +514,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 	 * @group Table - Internals
 	"""
 	def draw(self, table_obj, tableWidth, tableHeight, deviceActiveRow, deviceActiveColumn):
-		rowsColsNumbers = self.getRowsColsWithHeaders(tableWidth, tableHeight, deviceActiveRow, deviceActiveColumn)
+		rowsColsNumbers = self.getRowsColsWithHeaders(tableWidth, tableHeight, deviceActiveRow, deviceActiveColumn, table_obj)
 		# populate data (ascii)
 		rowsColsUntranslated = []
 		for rowNums in rowsColsNumbers:
@@ -638,9 +656,9 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		log.info(f"initial pos {row} {col}")
 
 		if page:
-			layout_info = self.getTableLayoutInfo(row, col)
+			layout_info = self.getTableLayoutInfo(row, col, table_obj)
 			amount = layout_info.numRowsWithoutHeaders
-			num_headers = layout_info.numRowsTotal - layout_info.numRowsWithoutHeaders
+			num_headers = layout_info.numRowsHeaders
 			if direction == Direction.Down and row < num_headers:
 				amount += num_headers - row
 		else:
@@ -728,7 +746,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		
 		table_obj, cell_obj, row, col, tableWidth, tableHeight = table_info
 
-		rowsColsNumbers = self.getRowsColsWithHeaders(tableWidth, tableHeight, row, col)
+		rowsColsNumbers = self.getRowsColsWithHeaders(tableWidth, tableHeight, row, col, table_obj)
 
 		row = rowsColsNumbers[deviceRow][0].row
 
