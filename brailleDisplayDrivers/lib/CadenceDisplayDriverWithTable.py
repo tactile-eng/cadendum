@@ -666,7 +666,43 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		api.setNavigatorObject(new_cell)
 
 		self.actuallyDisplayTable()
-	
+
+	def moveTableToEdge(self, direction):
+		log.info("moveTableToEdge")
+		queueHandler.queueFunction(
+			queueHandler.eventQueue,
+			lambda : self.actuallyMoveTableToEdge(direction),
+			_immediate=True,
+		)
+
+	def actuallyMoveTableToEdge(self, direction):
+		table_info = self.getTableInfo()
+		if table_info == None:
+			log.warn("move table to edge when not in table")
+			return
+		
+		table_obj, cell_obj, row, col, tableWidth, tableHeight = table_info
+
+		if direction == Direction.Up:
+			row = 0
+		elif direction == Direction.Down:
+			if tableHeight != None:
+				row = tableHeight - 1
+		elif direction == Direction.Left:
+			col = 0
+		elif direction == Direction.Right:
+			if tableWidth != None:
+				col = tableWidth - 1
+		
+		new_cell = self.getCell(table_obj, row, col)
+		if new_cell == None:
+			log.error("improperly sized table")
+			return
+
+		api.setNavigatorObject(new_cell)
+
+		self.actuallyDisplayTable()
+
 	def goToRow(self, row):
 		log.info(f"goToRow {row}")
 		queueHandler.queueFunction(
@@ -761,16 +797,24 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 						self.moveTable(Direction.Up, True)
 					elif MiniKey.DPadDown in liveKeys:
 						self.moveTable(Direction.Down, True)
-				elif MiniKey.PanLeft in liveKeys or MiniKey.PanRight in liveKeys:
-					if MiniKey.DPadUp in liveKeys:
+					elif MiniKey.Row1 in liveKeys:
 						self.showFixedColumnHeader = not self.showFixedColumnHeader
 						self.displayTable()
-					elif MiniKey.DPadLeft in liveKeys:
+					elif MiniKey.Row2 in liveKeys:
 						self.showFixedRowHeader = not self.showFixedRowHeader
 						self.displayTable()
-					elif MiniKey.DPadCenter in liveKeys:
+					elif MiniKey.Row3 in liveKeys:
 						self.showCellPositionsDevice = not self.showCellPositionsDevice
 						self.displayTable()
+				elif MiniKey.PanLeft in liveKeys or MiniKey.PanRight in liveKeys:
+					if MiniKey.DPadUp in liveKeys:
+						self.moveTableToEdge(Direction.Up)
+					elif MiniKey.DPadDown in liveKeys:
+						self.moveTableToEdge(Direction.Down)
+					elif MiniKey.DPadLeft in liveKeys:
+						self.moveTableToEdge(Direction.Left)
+					elif MiniKey.DPadRight in liveKeys:
+						self.moveTableToEdge(Direction.Right)
 			elif len(liveKeys) == 0 and len(composedKeys) == 1:
 				# navigate to cell - center
 				if MiniKey.DPadCenter in composedKeys:
