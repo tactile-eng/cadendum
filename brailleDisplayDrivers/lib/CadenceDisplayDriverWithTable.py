@@ -6,7 +6,7 @@ import controlTypes
 from braille import NVDAObjectRegion, TextRegion
 from collections import namedtuple
 import math
-from brailleDisplayDrivers.lib.MainCadenceDisplayDriver import MiniKey, DevSide, MiniKeyInputGesture, DOT_KEYS
+from brailleDisplayDrivers.lib.MainCadenceDisplayDriver import MiniKey, DevSide, MiniKeyInputGesture, DOT_KEYS, DevPosition
 from NVDAObjects import NVDAObject
 from NVDAObjects.window.excel import ExcelWorksheet, ExcelCell
 
@@ -33,6 +33,13 @@ def backTranslate(text: list[int]):
 	for braille_char in text:
 		out += BRAILLE_LOOKUP[braille_char] if braille_char in BRAILLE_LOOKUP else "?"
 	return out
+
+rowButtonNumbers = {
+	MiniKey.Row1: 0,
+	MiniKey.Row2: 1,
+	MiniKey.Row3: 2,
+	MiniKey.Row4: 3,
+}
 
 class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 	displayingTable: bool
@@ -659,6 +666,35 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		api.setNavigatorObject(new_cell)
 
 		self.actuallyDisplayTable()
+	
+	def goToRow(self, row):
+		log.info(f"goToRow {row}")
+		queueHandler.queueFunction(
+			queueHandler.eventQueue,
+			lambda : self.actuallyGoToRow(row),
+			_immediate=True,
+		)
+
+	def actuallyGoToRow(self, deviceRow):
+		table_info = self.getTableInfo()
+		if table_info == None:
+			log.warn("move table when not in table")
+			return
+		
+		table_obj, cell_obj, row, col, tableWidth, tableHeight = table_info
+
+		rowsColsNumbers = self.getRowsColsWithHeaders(tableWidth, tableHeight, row, col)
+
+		row = rowsColsNumbers[deviceRow][0].row
+
+		new_cell = self.getCell(table_obj, row, col)
+		if new_cell == None:
+			log.error("improperly sized table")
+			return
+
+		api.setNavigatorObject(new_cell)
+
+		self.doToggleTable()
 
 	def navigateToTableCell(self):
 		log.info("navigateToTableCell")
@@ -711,6 +747,14 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 					self.moveTable(Direction.Left)
 				elif MiniKey.DPadRight in liveKeys:
 					self.moveTable(Direction.Right)
+				elif liveKeys[0] in rowButtonNumbers:
+					rowNum = rowButtonNumbers[liveKeys[0]]
+					if self.numRows > 4:
+						device = liveKeysWithPosition[0][1]
+						position = self.getDevPosition(device)
+						if position == DevPosition.BottomLeft or position == DevPosition.BottomRight:
+							rowNum += 4
+					self.goToRow(rowNum)
 			elif len(liveKeys) == 2 and len(composedKeys) == 0:
 				if MiniKey.Space in liveKeys:
 					if MiniKey.DPadUp in liveKeys:
