@@ -332,7 +332,8 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 	 * @param isDevice true if is for device, false for GUI
 	 * @returns table layout info
 	"""
-	def getTableLayoutInfo(self, deviceTableTop, deviceActiveColumn):
+	def getTableLayoutInfo(self, deviceActiveRow, deviceActiveColumn):
+		deviceTableTop = max(deviceActiveRow - 1, 0) if self.showFixedColumnHeader else deviceActiveRow
 		showCellPositions = self.showCellPositionsDevice
 		showColumnHeaders = self.showFixedColumnHeader and not showCellPositions
 		showRowHeaders = self.showFixedRowHeader and not showCellPositions
@@ -392,8 +393,8 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 	 * @returns the data
 	 * @group Table - Internals
 	"""
-	def getRowsColsWithHeaders(self, tableWidth, tableHeight, deviceTableTop, deviceActiveColumn):
-		layoutInfo = self.getTableLayoutInfo(deviceTableTop, deviceActiveColumn)
+	def getRowsColsWithHeaders(self, tableWidth, tableHeight, deviceActiveRow, deviceActiveColumn):
+		layoutInfo = self.getTableLayoutInfo(deviceActiveRow, deviceActiveColumn)
 		rowsCols = self.getRowsColsWithoutHeaders(
 			tableWidth,
 			tableHeight,
@@ -488,8 +489,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 	 * @group Table - Internals
 	"""
 	def draw(self, table_obj, tableWidth, tableHeight, deviceActiveRow, deviceActiveColumn):
-		deviceTableTop = max(deviceActiveRow - 1, 0) if self.showFixedColumnHeader else deviceActiveRow
-		rowsColsNumbers = self.getRowsColsWithHeaders(tableWidth, tableHeight, deviceTableTop, deviceActiveColumn)
+		rowsColsNumbers = self.getRowsColsWithHeaders(tableWidth, tableHeight, deviceActiveRow, deviceActiveColumn)
 		# populate data (ascii)
 		rowsColsUntranslated = []
 		for rowNums in rowsColsNumbers:
@@ -611,15 +611,15 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		# self.display.moveCursor(cursorColX, 0)
 		self.display(lines, False, True)
 
-	def moveTable(self, direction):
+	def moveTable(self, direction, page=False):
 		log.info("moveTable")
 		queueHandler.queueFunction(
 			queueHandler.eventQueue,
-			lambda : self.actuallyMoveTable(direction),
+			lambda : self.actuallyMoveTable(direction, page),
 			_immediate=True,
 		)
 
-	def actuallyMoveTable(self, direction):
+	def actuallyMoveTable(self, direction, page=False):
 		table_info = self.getTableInfo()
 		if table_info == None:
 			log.warn("move table when not in table")
@@ -627,20 +627,29 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		
 		table_obj, cell_obj, row, col, tableWidth, tableHeight = table_info
 
+		if page:
+			layout_info = self.getTableLayoutInfo(row, col)
+			amount = layout_info.numRowsWithoutHeaders
+			num_headers = layout_info.numRowsTotal - layout_info.numRowsWithoutHeaders
+			if direction == Direction.Down and row < num_headers:
+				amount += num_headers - row
+		else:
+			amount = 1
+
 		if direction == Direction.Up:
-			row = max(row - 1, 0)
+			row = max(row - amount, 0)
 		elif direction == Direction.Down:
 			if tableHeight != None:
-				row = min(row + 1, tableHeight - 1)
+				row = min(row + amount, tableHeight - 1)
 			else:
-				row = row + 1
+				row = row + amount
 		elif direction == Direction.Left:
-			col = max(col - 1, 0)
+			col = max(col - amount, 0)
 		elif direction == Direction.Right:
 			if tableWidth != None:
-				col = min(col + 1, tableWidth - 1)
+				col = min(col + amount, tableWidth - 1)
 			else:
-				col = col + 1
+				col = col + amount
 		
 		new_cell = self.getCell(table_obj, row, col)
 		if new_cell == None:
@@ -704,6 +713,11 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 					self.moveTable(Direction.Right)
 			elif len(liveKeys) == 2 and len(composedKeys) == 0:
 				if MiniKey.Space in liveKeys:
+					if MiniKey.DPadUp in liveKeys:
+						self.moveTable(Direction.Up, True)
+					elif MiniKey.DPadDown in liveKeys:
+						self.moveTable(Direction.Down, True)
+				elif MiniKey.PanLeft in liveKeys or MiniKey.PanRight in liveKeys:
 					if MiniKey.DPadUp in liveKeys:
 						self.showFixedColumnHeader = not self.showFixedColumnHeader
 						self.displayTable()
