@@ -9,6 +9,9 @@ import math
 from brailleDisplayDrivers.lib.MainCadenceDisplayDriver import MiniKey, DevSide, MiniKeyInputGesture, DOT_KEYS, DevPosition
 from NVDAObjects import NVDAObject
 from NVDAObjects.window.excel import ExcelWorksheet, ExcelCell
+from NVDAObjects.UIA.excel import ExcelWorksheet as UIAExcelWorksheet
+from NVDAObjects.UIA import UIA
+from documentBase import DocumentWithTableNavigation
 
 rowCol = namedtuple("rowcol", ["row", "col"])
 savedTableInfo = namedtuple("savedTableInfo", ["table_obj", "width", "height", "row", "col"])
@@ -163,50 +166,72 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 				return True
 		return False
 
-	def getCell(self, table, row, col):
+	def getCells(self, table: NVDAObject, cellsSorted: list[rowCol]):
+		if len(cellsSorted) == 0:
+			return []
+		
 		if isinstance(table, ExcelWorksheet):
-			cell=table.excelWorksheetObject.cells(row + 1,col + 1) 
-			return ExcelCell(windowHandle=table.windowHandle,excelWindowObject=table.excelWindowObject,excelCellObject=cell)
+			log.info("is excel worksheet")
+			return [ExcelCell(windowHandle=table.windowHandle,excelWindowObject=table.excelWindowObject,excelCellObject=table.excelWorksheetObject.cells(cell.row + 1, cell.col + 1) ) for cell in cellsSorted]
 
 		row_obj = table.firstChild
 		row_i = 0
 
-		while row_obj != None:
-			if self.isCorrectCell(row_obj, row, col):
-				return row_obj
+		remainingCells = [cell for cell in cellsSorted]
+		output = []
+
+		while row_obj != None and len(remainingCells) > 0:
+			if self.isCorrectCell(row_obj, remainingCells[0].row, remainingCells[0].col):
+				output.append(row_obj)
+				remainingCells = remainingCells[1:]
+				continue
 			
 			row_num = self.getCellRowDirectly(row_obj)
 			if row_num == None:
 				row_num = row_i
 
-			if row_num == row:
+			if row_num == remainingCells[0].row and row_obj.role == controlTypes.ROLE_TABLEROW:
 				col_obj = row_obj.firstChild
 				col_i = 0
 
-				while col_obj != None:
-					if self.isCorrectCell(col_obj, row, col):
-						return col_obj
+				while col_obj != None and len(remainingCells) > 0 and row_num == remainingCells[0].row:
+					if self.isCorrectCell(col_obj, remainingCells[0].row, remainingCells[0].col):
+						output.append(col_obj)
+						remainingCells = remainingCells[1:]
+						continue
 
 					col_num = self.getCellColDirectly(col_obj)
 					if col_num == None:
 						col_num = row_i
 					
-					if col_num == col:
-						return col_obj
-					elif col_num > col:
+					if col_num == remainingCells[0].col:
+						output.append(col_obj)
+						remainingCells = remainingCells[1:]
+						continue
+					elif col_num > remainingCells[0].col:
+						log.error(f"passed col {row_obj} {col_obj} {remainingCells[0].col} {col_num}")
 						return None
 					
 					col_i += 1
 					col_obj = col_obj.next
-
-				return None
-			elif row_num > row:
+			elif row_num > remainingCells[0].row:
+				log.error(f"passed row {row_obj} {remainingCells[0].row} {row_num}")
 				return None
 			
 			row_i += 1
 			row_obj = row_obj.next
 
-		return None
+		if len(remainingCells) == 0:
+			return output
+		else:
+			log.error("unable to find cells")
+			return None
+
+	def getCell(self, table, row, col):
+		out = self.getCells(table, [rowCol(row=row, col=col)])
+		if out == None:
+			return None
+		return out[0]
 
 	def getIndexInParent(self, findChild):
 		try:
@@ -239,7 +264,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		while table_search_obj.parent != None and table_search_obj.role != controlTypes.ROLE_TABLE:
 			if table_search_obj.role == controlTypes.ROLE_TABLECELL:
 				cell_obj = table_search_obj
-			log.info(f"search {table_search_obj.name} {table_search_obj.role}")
+			log.info(f"search {table_search_obj} {table_search_obj.name} {table_search_obj.role}")
 			obj_stack.append(table_search_obj)
 			table_search_obj = table_search_obj.parent
 		
@@ -303,7 +328,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 
 		cell_obj = self.getCell(table_obj, row, col)
 		if cell_obj == None:
-			log.error(f"unable to get cell {row} {col}")
+			log.error(f"unable to get cell {row} {col} {table_obj}")
 			return None
 
 		log.info(f"table: {table_obj} {table_obj.name}")
@@ -516,6 +541,18 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 	def draw(self, table_obj, tableWidth, tableHeight, deviceActiveRow, deviceActiveColumn):
 		rowsColsNumbers = self.getRowsColsWithHeaders(tableWidth, tableHeight, deviceActiveRow, deviceActiveColumn, table_obj)
 		# populate data (ascii)
+		allCellPositionsInOrder: list[rowCol] = []
+		for rowNums in rowsColsNumbers:
+			for cell in rowNums:
+				if cell.row != None and cell.col != None:
+					allCellPositionsInOrder.append(cell)
+		
+		cellObjects = self.getCells(table_obj, allCellPositionsInOrder)
+		if cellObjects == None:
+			log.error("unable to get cells in draw")
+			self.displayText("error")
+			return
+		
 		rowsColsUntranslated = []
 		for rowNums in rowsColsNumbers:
 			rowUntranslated = []
@@ -530,7 +567,8 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 				elif col == None:
 					data = str(row + 1)
 				else:
-					data = self.getCell(table_obj, row, col)
+					cellPositionI = allCellPositionsInOrder.index(cell)
+					data = cellObjects[cellPositionI]
 				rowUntranslated.append(data)
 			rowsColsUntranslated.append(rowUntranslated)
 		log.info(f"names: {[[(None if cell == None else (cell if type(cell) == str else cell.name)) for cell in row] for row in rowsColsUntranslated]}")
