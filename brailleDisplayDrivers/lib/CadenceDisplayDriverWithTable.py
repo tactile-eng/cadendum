@@ -102,7 +102,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 
 	def toggleBlinkAndDisplayTable(self):
 		self.blink = not self.blink
-		self.displayTable()
+		self.actuallyDisplayTable()
 
 	def doToggleImage(self):
 		if self.displayingTable:
@@ -352,6 +352,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		table_info = self.getTableInfo()
 		if table_info == None:
 			self.displayText("not in table")
+			log.info("not in table")
 			return
 
 		table_obj, cell_obj, row, col, tableWidth, tableHeight = table_info
@@ -359,6 +360,8 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		log.info(f"{table_obj} {cell_obj} {row} {col} {tableWidth} {tableHeight}")
 
 		self.draw(table_obj, tableWidth, tableHeight, row, col)
+
+		log.info(f"######## finished actuallyDisplayTable")
 
 	"""
 	 * Information on how large table is, how many headers, where data is scrolled

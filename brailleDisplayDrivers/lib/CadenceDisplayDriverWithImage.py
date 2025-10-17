@@ -79,10 +79,26 @@ class RunInterval(threading.Thread):
 	def run(self):
 		while not self.stopFlag.wait(self.interval):
 			try:
-				self.callback()
+				log.info("started runinterval callback")
+				completedFlag = threading.Event()
+				queueHandler.queueFunction(
+					queueHandler.eventQueue,
+					lambda : self.callbackEventQueueWithCompletionFlag(completedFlag),
+					_immediate=False,
+				)
+				notTimeout = completedFlag.wait(10)
+				if not notTimeout:
+					log.error("timout when waiting for callback")
+				log.info("finished started runinterval callback")
 			except Exception as e:
 				log.error(f"{e}")
 				pass
+	
+	def callbackEventQueueWithCompletionFlag(self, completionFlag):
+		try:
+			self.callback()
+		finally:
+			completionFlag.set()
 
 # Extends the driver to support image mode
 class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
@@ -171,7 +187,7 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 		if self.displayingImage:
 			self.displayImage()
 			if self.imageTimer is None:
-				self.imageTimer = RunInterval(self.displayImage, 0.5)
+				self.imageTimer = RunInterval(self.actuallyDisplayImage, 0.5)
 				self.imageTimer.start()
 		else:
 			self.restoreNonImage()
