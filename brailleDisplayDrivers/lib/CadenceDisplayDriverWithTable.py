@@ -12,6 +12,7 @@ from NVDAObjects.window.excel import ExcelWorksheet, ExcelCell
 from NVDAObjects.UIA.excel import ExcelWorksheet as UIAExcelWorksheet
 from NVDAObjects.UIA import UIA
 from documentBase import DocumentWithTableNavigation
+import time
 
 rowCol = namedtuple("rowcol", ["row", "col"])
 savedTableInfo = namedtuple("savedTableInfo", ["table_obj", "width", "height", "row", "col"])
@@ -79,6 +80,19 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 
 		super().__init__(port)
 
+	def startTimer(self):
+		actualTime = time.time_ns()
+		perfTime = time.perf_counter_ns()
+		procTime = time.process_time_ns()
+		return [[actualTime, perfTime, procTime], [actualTime, perfTime, procTime]]
+	
+	def measureTime(self, name: str, timer: list[list[int]]):
+		actualTime = time.time_ns()
+		perfTime = time.perf_counter_ns()
+		procTime = time.process_time_ns()
+		log.info(f"time {name}: {actualTime - timer[1][0]} {perfTime - timer[1][1]} {procTime - timer[1][2]} ({actualTime - timer[0][0]} {perfTime - timer[0][1]} {procTime - timer[0][2]})")
+		timer[1] = [actualTime, perfTime, procTime]
+
 	def doToggleTable(self):
 		log.info(f"######## toggle table")
 		if self.displayingImage:
@@ -116,10 +130,11 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		if isTable == self.displayingTable:
 			super().display(cells, isImage)
 
-	def displayTable(self, resetView = False):
+	def displayTable(self):
+		timer = self.startTimer()
 		queueHandler.queueFunction(
 			queueHandler.eventQueue,
-			lambda : self.actuallyDisplayTable(resetView),
+			lambda : self.actuallyDisplayTable(timer),
 			_immediate=True,
 		)
 
@@ -248,6 +263,8 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 			return None
 
 	def getTableInfo(self):
+		timer = self.startTimer()
+
 		obj = api.getNavigatorObject()
 		if obj is None:
 			log.info("no navigator object, switching to focus object")
@@ -255,6 +272,8 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 			if obj is None:
 				log.error("no focus object")
 				return None
+		
+		self.measureTime("nav object", timer)
 		
 		log.info(f"looking for role (table={controlTypes.ROLE_TABLE} row={controlTypes.ROLE_TABLEROW} col={controlTypes.ROLE_TABLECOLUMN} cell={controlTypes.ROLE_TABLECELL} colheader={controlTypes.ROLE_TABLECOLUMNHEADER} rowheader={controlTypes.ROLE_TABLEROWHEADER})")
 
@@ -275,6 +294,8 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		table_obj = table_search_obj
 		log.info(f"found {table_obj.name} {table_obj.role} {table_obj}")
 
+		self.measureTime("find table", timer)
+
 		row = None
 		col = None
 		if cell_obj != None:
@@ -290,6 +311,8 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 				col = 0
 		log.info(f"{obj_stack} {row} {col}")
 		
+		self.measureTime("find position in table", timer)
+
 		log.info("finding table size")
 		tableHeight = 0
 		tableWidth = 0
@@ -326,16 +349,15 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		if tableHeight == None or tableWidth == None:
 			log.warn("large table")
 
-		cell_obj = self.getCell(table_obj, row, col)
-		if cell_obj == None:
-			log.error(f"unable to get cell {row} {col} {table_obj}")
-			return None
+		self.measureTime("find table size", timer)
 
 		log.info(f"table: {table_obj} {table_obj.name}")
-		log.info(f"cell: {cell_obj} {cell_obj.name}")
 		log.info(f"pos: {row} {col}")
 
-		return table_obj, cell_obj, row, col, tableWidth, tableHeight
+
+		self.measureTime("total getTableInfo", timer)
+		
+		return table_obj, row, col, tableWidth, tableHeight
 	
 	def displayText(self, text):
 		region = TextRegion(text)
@@ -346,7 +368,9 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 			braille.append(0)
 		self.display(braille, False, True)
 
-	def actuallyDisplayTable(self, resetView = False):
+	def actuallyDisplayTable(self, timer = None):
+		if timer != None:
+			self.measureTime("start actuallyDisplayTable", timer)
 		log.info(f"######## actuallyDisplayTable")
 
 		table_info = self.getTableInfo()
@@ -355,13 +379,19 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 			log.info("not in table")
 			return
 
-		table_obj, cell_obj, row, col, tableWidth, tableHeight = table_info
+		table_obj, row, col, tableWidth, tableHeight = table_info
 
-		log.info(f"{table_obj} {cell_obj} {row} {col} {tableWidth} {tableHeight}")
+		if timer != None:
+			self.measureTime("info actuallyDisplayTable", timer)
+
+		log.info(f"{table_obj} {row} {col} {tableWidth} {tableHeight}")
 
 		self.draw(table_obj, tableWidth, tableHeight, row, col)
 
 		log.info(f"######## finished actuallyDisplayTable")
+
+		if timer != None:
+			self.measureTime("draw actuallyDisplayTable", timer)
 
 	"""
 	 * Information on how large table is, how many headers, where data is scrolled
@@ -542,7 +572,12 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 	 * @group Table - Internals
 	"""
 	def draw(self, table_obj, tableWidth, tableHeight, deviceActiveRow, deviceActiveColumn):
+		timer = self.startTimer()
+
 		rowsColsNumbers = self.getRowsColsWithHeaders(tableWidth, tableHeight, deviceActiveRow, deviceActiveColumn, table_obj)
+
+		self.measureTime("rowsColsNumbers", timer)
+
 		# populate data (ascii)
 		allCellPositionsInOrder: list[rowCol] = []
 		for rowNums in rowsColsNumbers:
@@ -550,12 +585,16 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 				if cell.row != None and cell.col != None:
 					allCellPositionsInOrder.append(cell)
 		
+		self.measureTime("allCellPositionsInOrder", timer)
+
 		cellObjects = self.getCells(table_obj, allCellPositionsInOrder)
 		if cellObjects == None:
 			log.error("unable to get cells in draw")
 			self.displayText("error")
 			return
 		
+		self.measureTime("cellObjects", timer)
+
 		rowsColsUntranslated = []
 		for rowNums in rowsColsNumbers:
 			rowUntranslated = []
@@ -575,8 +614,14 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 				rowUntranslated.append(data)
 			rowsColsUntranslated.append(rowUntranslated)
 		log.info(f"names: {[[(None if cell == None else (cell if type(cell) == str else cell.name)) for cell in row] for row in rowsColsUntranslated]}")
+
+		self.measureTime("untranslated", timer)
+
 		# translate
 		rowsColsTranslated = self.translateRows(rowsColsUntranslated)
+
+		self.measureTime("translated", timer)
+
 		# strip " column header" / " row header"
 		hasColumnHeaderText = True
 		hasRowHeaderText = True
@@ -594,6 +639,9 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 					rowsColsTranslated[rowI][colI] = translated[:-len(self.columnHeaderTextToStrip)]
 				if hasRowHeaderText and pos.col == 0 and self.endsWithBraille(translated, self.rowHeaderTextToStrip):
 					rowsColsTranslated[rowI][colI] = translated[:-len(self.rowHeaderTextToStrip)]
+
+		self.measureTime("strip column header / row header", timer)
+
 		# strip position info
 		hasPositionText = True
 		for rowI, rowTranslated in enumerate(rowsColsTranslated):
@@ -611,6 +659,9 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 						address_braille = self.getExcelCellPositionBraille(untranslated, translated)
 						rowsColsTranslated[rowI][colI] = translated[:-len(address_braille)]
 		log.info(f"rowsColsTranslated stripped: {[[backTranslate(cell) for cell in row] for row in rowsColsTranslated]}")
+
+		self.measureTime("strip position info", timer)
+
 		# return if no data
 		if len(rowsColsTranslated) == 0:
 			self.displayText("empty table")
@@ -622,6 +673,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 			for colI, text in enumerate(rowArr):
 				colWidths[colI] = max(colWidths[colI], len(text))
 		log.info(f"colWidths 1: {colWidths}")
+		self.measureTime("max width", timer)
 		# where is active column
 		cursorColIs = [i for i, col in enumerate(rowsColsNumbers[0]) if col.col == deviceActiveColumn]
 		if len(cursorColIs) != 1:
@@ -630,17 +682,20 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 			return
 		cursorColI = cursorColIs[0]
 		log.info(f"cursorColI: {cursorColI}")
+		self.measureTime("find active column", timer)
 		# limit the size of the first column if row headers are active but not the selected column, if necessary, to have more space for the actual data
 		for i in range(cursorColI):
 			colWidths[i] = min(colWidths[i], maxColHeaderChars)
 		# make all empty columns take up 1 space
 		colWidths = [max(width, 1) for width in colWidths]
 		log.info(f"colWidths 2: {colWidths}")
+		self.measureTime("empty columns", timer)
 		# find x position of active column
 		cursorColX = 0
 		for i in range(cursorColI):
 			cursorColX += colWidths[i] + 1
 		log.info(f"cursorColX: {cursorColX}")
+		self.measureTime("active column x", timer)
 		# limit active column to device width (and even smaller if there's more data to the right so we can indicate that there's more data)
 		if cursorColX + colWidths[cursorColI] > self.numCols - 2:
 			if (cursorColI + 1 < len(colWidths) and colWidths[cursorColI + 1] > 0):
@@ -648,6 +703,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 			elif (cursorColX + colWidths[cursorColI] > self.numCols):
 				colWidths[cursorColI] = max(self.numCols - cursorColX, 1)
 		log.info(f"colWidths 3: {colWidths}")
+		self.measureTime("limit active column", timer)
 		# write data into lines
 		lines = []
 		newMaxPanHorizontal = 0
@@ -669,30 +725,42 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 			lines += line
 			log.info(f"line: {backTranslate(line)}")
 		self.maxPanHorizontal = newMaxPanHorizontal
+		self.measureTime("write into lines", timer)
 		
 		while len(lines) < self.numRows * self.numCols:
 			lines.append(0)
 		
+		self.measureTime("pad end", timer)
+
 		# display lines
 		# self.display.moveCursor(cursorColX, 0)
 		self.display(lines, False, True)
 
+		self.measureTime("display", timer)
+
+		self.measureTime("total draw", timer)
+
 	def moveTable(self, direction, page=False):
 		log.info(f"moveTable {direction} {page}")
+		timer = self.startTimer()
 		queueHandler.queueFunction(
 			queueHandler.eventQueue,
-			lambda : self.actuallyMoveTable(direction, page),
+			lambda : self.actuallyMoveTable(direction, page, timer),
 			_immediate=True,
 		)
 
-	def actuallyMoveTable(self, direction, page=False):
+	def actuallyMoveTable(self, direction, page, timer):
+		self.measureTime("queue", timer)
+
 		log.info(f"actuallyMoveTable {direction} {page}")
 		table_info = self.getTableInfo()
 		if table_info == None:
 			log.warn("move table when not in table")
 			return
 		
-		table_obj, cell_obj, row, col, tableWidth, tableHeight = table_info
+		self.measureTime("tableInfo", timer)
+
+		table_obj, row, col, tableWidth, tableHeight = table_info
 
 		log.info(f"initial pos {row} {col}")
 
@@ -704,6 +772,9 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 				amount += num_headers - row
 		else:
 			amount = 1
+
+		self.measureTime("layout", timer)
+
 
 		if direction == Direction.Up:
 			row = max(row - amount, 0)
@@ -722,6 +793,8 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 
 		log.info(f"new pos {row} {col}")
 
+		self.measureTime("new pos", timer)
+
 		new_cell = self.getCell(table_obj, row, col)
 		if new_cell == None:
 			log.error("improperly sized table")
@@ -729,11 +802,20 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 
 		log.info(f"setting navigator object")
 
+		self.measureTime("get new cell", timer)
+
 		api.setNavigatorObject(new_cell)
+
+		self.measureTime("setNavigatorObject", timer)
 
 		log.info(f"set navigator object")
 
-		self.actuallyDisplayTable()
+		self.actuallyDisplayTable(timer)
+
+		self.measureTime("move display", timer)
+
+		self.measureTime("total actuallyMoveTable", timer)
+
 
 	def moveTableToEdge(self, direction):
 		log.info("moveTableToEdge")
@@ -749,7 +831,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 			log.warn("move table to edge when not in table")
 			return
 		
-		table_obj, cell_obj, row, col, tableWidth, tableHeight = table_info
+		table_obj, row, col, tableWidth, tableHeight = table_info
 
 		if direction == Direction.Up:
 			row = 0
@@ -785,7 +867,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 			log.warn("move table when not in table")
 			return
 		
-		table_obj, cell_obj, row, col, tableWidth, tableHeight = table_info
+		table_obj, row, col, tableWidth, tableHeight = table_info
 
 		rowsColsNumbers = self.getRowsColsWithHeaders(tableWidth, tableHeight, row, col, table_obj)
 
@@ -827,7 +909,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 	def afterDevicePositionsChanged(self):
 		super().afterDevicePositionsChanged()
 		if self.displayingTable:
-			self.displayTable(True)
+			self.displayTable()
 		else:
 			self.restoreNonTable()
 
