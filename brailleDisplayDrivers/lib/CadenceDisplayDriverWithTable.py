@@ -56,6 +56,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 	blink: bool
 	maxPanHorizontal = 0
 	lastTableTop: tuple[int, NVDAObject] | None
+	wasInTable = False
 
 	columnHeaderTextToStrip: list[int]
 	rowHeaderTextToStrip: list[int]
@@ -103,6 +104,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		if self.displayingTable:
 			self.blink = True
 			self.panHorizontal = 0
+			self.wasInTable = False
 
 			self.displayTable()
 			if self.tableTimer is None:
@@ -375,9 +377,13 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 
 		table_info = self.getTableInfo()
 		if table_info == None:
-			self.displayText("not in table")
 			log.info("not in table")
+			if self.wasInTable:
+				self.doToggleTable()
+			else:
+				self.displayText("not in table")
 			return
+		self.wasInTable = True
 
 		table_obj, row, col, tableWidth, tableHeight = table_info
 
