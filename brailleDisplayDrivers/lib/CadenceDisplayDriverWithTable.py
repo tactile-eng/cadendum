@@ -811,6 +811,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		self.measureTime("get new cell", timer)
 
 		api.setNavigatorObject(new_cell)
+		api.setFocusObject(new_cell)
 
 		self.measureTime("setNavigatorObject", timer)
 
@@ -856,6 +857,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 			return
 
 		api.setNavigatorObject(new_cell)
+		api.setFocusObject(new_cell)
 
 		self.actuallyDisplayTable()
 
@@ -885,6 +887,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 			return
 
 		api.setNavigatorObject(new_cell)
+		api.setFocusObject(new_cell)
 
 		self.actuallyDisplayTable()
 
@@ -906,6 +909,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		cell = self.getCell(table_info.table_obj, table_info.row, table_info.col)
 		if cell != None:
 			api.setNavigatorObject(cell)
+			api.setFocusObject(cell)
 
 			self.doToggleTable()
 		else:
