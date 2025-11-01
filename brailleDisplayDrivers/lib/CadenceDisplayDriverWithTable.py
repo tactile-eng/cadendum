@@ -880,7 +880,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 
 		api.setNavigatorObject(new_cell)
 
-		self.doToggleTable()
+		self.actuallyDisplayTable()
 
 	def navigateToTableCell(self):
 		log.info("navigateToTableCell")
