@@ -92,6 +92,13 @@ class MiniKey(Enum):
 	Dot7 = 14
 	Dot8 = 15
 	Space = 16
+	Touch = 1000
+
+class Touch(object):
+	def __init__(self, row: int, col: int, index: int):
+		self.row = row
+		self.col = col
+		self.index = index
 
 # key IDs for right-side device when using two-device mode
 rightKeys = {
@@ -163,6 +170,7 @@ keyToNVDAName = {
 	MiniKey.Dot7: "dot7",
 	MiniKey.Dot8: "dot8",
 	MiniKey.Space: "space",
+	MiniKey.Touch: "routerKey",
 }
 
 DOT_KEYS = [
@@ -269,8 +277,14 @@ class HidFeatureReport(hid.HidOutputReport):
 class MiniKeyInputGesture(braille.BrailleDisplayGesture, brailleInput.BrailleInputGesture):
 	source = HidBrailleDriver.name
 
-	def __init__(self, keys: list[MiniKey]):
+	def __init__(self, keys: list[MiniKey], touch: Touch | None):
 		super().__init__()
+
+		if MiniKey.Touch in keys and touch != None:
+			self.routingIndex = touch.index
+		else:
+			keys = [key for key in keys if key != MiniKey.Touch]
+		
 		self.keyCodes = set(keys)
 		self.keyNames = [keyToNVDAName[key] for key in keys]
 
@@ -450,6 +464,8 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 
 	devices: list[CadenceDeviceDriver]
 
+	touch: Touch | None
+
 	@classmethod
 	def registerAutomaticDetection(cls, driverRegistrar: bdDetect.DriverRegistrar):
 		driverRegistrar.addUsbDevices(
@@ -471,6 +487,7 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 		self.composedKeys = []
 		self.devices = []
 		self.keyGestureHandled = False
+		self.touch = None
 
 		# check for USB devices
 		for devMatch in self._getTryPorts("usb"):
@@ -541,29 +558,62 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 
 	# receive button press from device (called by CadenceDeviceDriver)
 	def _hidOnReceive(self, data: bytes, devIndex: int):
-		# log.info("# data: " + " ".join([f"{b:0>8b}" for b in data]))
-		if len(data) == 5 or len(data) == 7:
+		log.info("# data: " + " ".join([f"{b:0>8b}" for b in data]))
+		isSingle = len(data) == 5 or len(data) == 6
+		isDouble = len(data) == 7 or len(data) == 8
+		hasTouch = len(data) == 6 or len(data) == 8
+		if isSingle or isDouble:
 			keysDown = [key for key in self.prevKeysDown if key[1][0] != devIndex]
-			for byteI, byte in enumerate(data):
+			dataWithoutTouch = data[:-1] if hasTouch else data
+			device = self.devices[devIndex]
+			for byteI, byte in enumerate(dataWithoutTouch):
 				for bitI in range(8):
 					if byte & (1 << bitI):
 						index = byteI * 8 + bitI
 						log.info(f"## key {index}")
-						device = self.devices[devIndex]
 						devSides = device.getSides()
 						devSide = devSides[0]
-						if len(data) == 7 or (len(data) == 5 and devSide == DevSide.Right):
+						if isDouble or (isSingle and devSide == DevSide.Right):
 							if index in rightKeys:
 								index = rightKeys[index]
-								if len(data) == 7:
+								if isDouble:
 									devSide = devSides[1]
 						key = MiniKey(index)
-						if len(data) == 5 and devSide == DevSide.Right:
+						if isSingle and devSide == DevSide.Right:
 							if key in mirroredKeys:
 								key = mirroredKeys[key]
 						key = self.rotateKey(key, self.getDevPosition((devIndex, devSide)))
 						if not key in keysDown:
 							keysDown.append((key, (devIndex, devSide)))
+			
+			if hasTouch:
+				keysDown = [key for key in keysDown if key != MiniKey.Touch]
+				cellIndex1Based = data[-1]
+				if cellIndex1Based != 0:
+					cellIndex0Based = cellIndex1Based - 1
+					numCols = 24 if isDouble else 12
+					row = math.floor(cellIndex0Based / numCols)
+					fullCol = cellIndex0Based % numCols
+					devSides = device.getSides()
+					devSide = devSides[0] if fullCol < 12 else devSides[1]
+					devPos = device.getPosition(devSide)
+					col = fullCol if fullCol < 12 else fullCol - 12
+					isFlipped = device.isFlipped
+					if isFlipped:
+						row = 3 - row
+						col = 11 - col
+					if self.numCols > 12 and (devPos == DevPosition.BottomRight or devPos == DevPosition.TopRight):
+						col += 12
+					if self.numRows > 4 and (devPos == DevPosition.BottomLeft or devPos == DevPosition.BottomRight):
+						row += 4
+					index = row * self.numCols + col
+					log.info(f"touch: {cellIndex1Based}, {devPos}, {row}, {col}, {isFlipped}, {cellIndex0Based}")
+					touchInfo = Touch(row, col, index)
+					self.touch = touchInfo
+					keysDown.append((MiniKey.Touch, (devIndex, devSide)))
+				else:
+					self.touch = None
+			
 			newKeys = [key for key in keysDown if key not in self.prevKeysDown]
 			keysUp = [key for key in self.prevKeysDown if not key in keysDown]
 			if len(newKeys) > 0:
@@ -588,7 +638,7 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 			if not self.keyGestureHandled and len(newKeys) == 0 and len(keysUp) > 0:
 				liveKeys = [key[0] for key in self.liveKeys]
 				composedKeys = [key[0] for key in self.composedKeys]
-				gesture = MiniKeyInputGesture(composedKeys + liveKeys)
+				gesture = MiniKeyInputGesture(composedKeys + liveKeys, self.touch)
 
 			self.handleKeys(self.liveKeys, self.composedKeys, gesture)
 
