@@ -170,7 +170,7 @@ keyToNVDAName = {
 	MiniKey.Dot7: "dot7",
 	MiniKey.Dot8: "dot8",
 	MiniKey.Space: "space",
-	MiniKey.Touch: "routerKey",
+	MiniKey.Touch: "routerSet1_routerKey",
 }
 
 DOT_KEYS = [
@@ -611,8 +611,6 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 					touchInfo = Touch(row, col, index)
 					self.touch = touchInfo
 					keysDown.append((MiniKey.Touch, (devIndex, devSide)))
-				else:
-					self.touch = None
 			
 			newKeys = [key for key in keysDown if key not in self.prevKeysDown]
 			keysUp = [key for key in self.prevKeysDown if not key in keysDown]
