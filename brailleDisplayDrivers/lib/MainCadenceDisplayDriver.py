@@ -14,6 +14,7 @@ from hwIo import hid
 import hidpi
 import hwPortUtils
 import brailleInput
+import winBindings
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
@@ -24,14 +25,14 @@ CM_Get_Parent.argtypes = [ctypes.POINTER(hwPortUtils.DWORD), hwPortUtils.DWORD, 
 CM_Get_Parent.restype = hwPortUtils.DWORD
 
 SetupDiOpenDeviceInfoW = ctypes.windll.setupapi.SetupDiOpenDeviceInfoW 
-SetupDiOpenDeviceInfoW.argtypes = [hwPortUtils.HDEVINFO,
+SetupDiOpenDeviceInfoW.argtypes = [winBindings.setupapi.HDEVINFO,
 	ctypes.wintypes.LPCWSTR,
-	hwPortUtils.HWND,
+	winBindings.setupapi.HWND,
 	hwPortUtils.DWORD,
-	ctypes.POINTER(hwPortUtils.SP_DEVINFO_DATA)]
+	ctypes.POINTER(winBindings.setupapi.SP_DEVINFO_DATA)]
 SetupDiOpenDeviceInfoW.restype = ctypes.c_bool
 
-def getParent(child_dev_inst: hwPortUtils.SP_DEVINFO_DATA, g_hdi: hwPortUtils.HDEVINFO) -> hwPortUtils.SP_DEVINFO_DATA:
+def getParent(child_dev_inst: winBindings.setupapi.SP_DEVINFO_DATA, g_hdi: winBindings.setupapi.HDEVINFO) -> winBindings.setupapi.SP_DEVINFO_DATA:
 	buf = ctypes.create_unicode_buffer(1024)
 
 	parent_dev_inst = hwPortUtils.DWORD()
@@ -43,15 +44,15 @@ def getParent(child_dev_inst: hwPortUtils.SP_DEVINFO_DATA, g_hdi: hwPortUtils.HD
 	if ret != 0:
 		raise ctypes.WinError(ctypes.get_last_error())
 	
-	parent_devinfo_data = hwPortUtils.SP_DEVINFO_DATA()
-	parent_devinfo_data.cbSize = ctypes.sizeof(hwPortUtils.SP_DEVINFO_DATA)
+	parent_devinfo_data = winBindings.setupapi.SP_DEVINFO_DATA()
+	parent_devinfo_data.cbSize = ctypes.sizeof(winBindings.setupapi.SP_DEVINFO_DATA)
 	ret = SetupDiOpenDeviceInfoW(g_hdi, buf.value, None, 0, ctypes.byref(parent_devinfo_data))
 	if not ret:
 		raise ctypes.WinError(ctypes.get_last_error())
 	
 	return parent_devinfo_data
 
-def getName(dev_inst: hwPortUtils.SP_DEVINFO_DATA, g_hdi: hwPortUtils.HDEVINFO) -> str:
+def getName(dev_inst: winBindings.setupapi.SP_DEVINFO_DATA, g_hdi: winBindings.setupapi.HDEVINFO) -> str:
 	buf = ctypes.create_unicode_buffer(1024)
 	DEVPKEY_NAME = hwPortUtils.DEVPROPKEY(hwPortUtils.GUID("{b725f130-47ef-101a-a5f1-02608c9eebac}"), 10)
 	propRegDataType = hwPortUtils.DWORD()

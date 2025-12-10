@@ -4,6 +4,8 @@ import braille
 from brailleDisplayDrivers.lib.CadenceDisplayDriverWithImage import CadenceDisplayDriverWithImage
 from brailleDisplayDrivers.lib.CadenceDisplayDriverWithTable import CadenceDisplayDriverWithTable
 
+log.info("CadencePlugin Init")
+
 # taken keys: NVDA + nrq81[]m7spu5243adflbtc6k
 # remaining keys: NVDA + eghijovwxyz
 
@@ -24,10 +26,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		else:
 			log.error("doToggleTable without CadenceDisplayDriver")	
 	
-	# taken shortcuts: 1qrnm7s23pu54adflbtc6k
+	# taken shortcuts: 1qrnm7s23pu54adflbtc6kg
 	__gestures={
-		"kb:NVDA+I": "doToggleImage",
+		"kb:NVDA+Shift+I": "doToggleImage",
 		"br(hidBrailleStandard):space+dot2+dot4": "doToggleImage",
-		"kb:NVDA+G": "doToggleTable",
+		"kb:NVDA+Shift+T": "doToggleTable",
 		"br(hidBrailleStandard):space+dot1+dot2+dot4+dot5": "doToggleTable",
 	}
