@@ -364,17 +364,19 @@ class CadenceDeviceDriver(HidBrailleDriver):
 
 		log.info(f"isRight {self.isRight}")
 
+		# Track flipped state per side (for duet/quartet layouts)
+		self.isFlipped = {side: False for side in self.getSides()}
+
 		# auto-select whether device is flipped based on whether another device is currently in non-flipped position
-		self.isFlipped = False
 		for side in self.getSides():
-			unflippedPos = self.getPosition(side)
+			unflippedPos = getDevicePosition(side, False)
 			for otherDevice in self.displayDriver.devices:
 				for otherDeviceSide in otherDevice.getSides():
-					if otherDevice.getPosition(otherDeviceSide) == unflippedPos and self.isFlipped == False:
-						if self.devName < otherDevice.devName:
-							otherDevice.isFlipped = True
+					if otherDevice.getPosition(otherDeviceSide) == unflippedPos and not self.isFlipped[side]:
+						if self.devName < getattr(otherDevice, "devName", ""):
+							otherDevice.isFlipped[otherDeviceSide] = True
 						else:
-							self.isFlipped = True
+							self.isFlipped[side] = True
 
 	# received button press (called by superclass)
 	def _hidOnReceive(self, data: bytes):
@@ -401,7 +403,7 @@ class CadenceDeviceDriver(HidBrailleDriver):
 
 	# get position of device
 	def getPosition(self, side: DevSide) -> DevPosition:
-		flipped = self.isFlipped
+		flipped = self.isFlipped.get(side, False)
 		return getDevicePosition(side, flipped)
 
 	def setOneHanded(self, newOneHanded: bool):
