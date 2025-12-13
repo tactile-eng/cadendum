@@ -759,8 +759,9 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 
 	def navigateToObject(self, nvda_object):
 		log.info(f"navigating to {nvda_object}")
-
+		
 		api.setNavigatorObject(nvda_object)
+		api.setFocusObject(nvda_object)
 
 		try:
 			log.info("setting browse cursor")
