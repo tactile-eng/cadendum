@@ -13,6 +13,8 @@ from NVDAObjects.UIA.excel import ExcelWorksheet as UIAExcelWorksheet
 from NVDAObjects.UIA import UIA
 from documentBase import DocumentWithTableNavigation
 import time
+import textInfos
+import treeInterceptorHandler
 
 rowCol = namedtuple("rowcol", ["row", "col"])
 savedTableInfo = namedtuple("savedTableInfo", ["table_obj", "width", "height", "row", "col"])
@@ -755,6 +757,24 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 			_immediate=True,
 		)
 
+	def navigateToObject(self, nvda_object):
+		log.info(f"navigating to {nvda_object}")
+
+		api.setNavigatorObject(nvda_object)
+
+		try:
+			log.info("setting browse cursor")
+			ti = nvda_object.treeInterceptor
+			if isinstance(ti, treeInterceptorHandler.DocumentTreeInterceptor) and ti.isReady:
+				text_info = ti.makeTextInfo(nvda_object)
+				log.info(f"textinfo: {text_info} {text_info.obj} {text_info.obj == nvda_object}")
+				ti.selection = text_info
+				log.info("set browse cursor")
+			else:
+				log.warn("no tree interceptor")
+		except Exception as e:
+			log.warn(f"unable to set browse cursor: {e}")
+
 	def actuallyMoveTable(self, direction, page, timer):
 		self.measureTime("queue", timer)
 
@@ -810,8 +830,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 
 		self.measureTime("get new cell", timer)
 
-		api.setNavigatorObject(new_cell)
-		api.setFocusObject(new_cell)
+		self.navigateToObject(new_cell)
 
 		self.measureTime("setNavigatorObject", timer)
 
@@ -856,8 +875,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 			log.error("improperly sized table")
 			return
 
-		api.setNavigatorObject(new_cell)
-		api.setFocusObject(new_cell)
+		self.navigateToObject(new_cell)
 
 		self.actuallyDisplayTable()
 
@@ -886,8 +904,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 			log.error("improperly sized table")
 			return
 
-		api.setNavigatorObject(new_cell)
-		api.setFocusObject(new_cell)
+		self.navigateToObject(new_cell)
 
 		self.actuallyDisplayTable()
 
@@ -908,8 +925,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 
 		cell = self.getCell(table_info.table_obj, table_info.row, table_info.col)
 		if cell != None:
-			api.setNavigatorObject(cell)
-			api.setFocusObject(cell)
+			self.navigateToObject(cell)
 
 			self.doToggleTable()
 		else:
