@@ -28,7 +28,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 	
 	# taken shortcuts: 1qrnm7s23pu54adflbtc6kg
 	__gestures={
-		"kb:NVDA+Shift+I": "doToggleImage",
+		"kb:NVDA+I": "doToggleImage",
 		"br(hidBrailleStandard):space+dot2+dot4": "doToggleImage",
 		"kb:NVDA+Shift+T": "doToggleTable",
 		"br(hidBrailleStandard):space+dot1+dot2+dot4+dot5": "doToggleTable",
