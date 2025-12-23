@@ -14,7 +14,27 @@ from hwIo import hid
 import hidpi
 import hwPortUtils
 import brailleInput
-import winBindings
+
+from ctypes import Structure, c_void_p
+from ctypes.wintypes import DWORD, HWND, PULONG
+HDEVINFO = c_void_p
+class SP_DEVINFO_DATA(Structure):
+	"""
+	An SP_DEVINFO_DATA structure defines a device instance that is a member of a device information set.
+
+	..seealso::
+		https://learn.microsoft.com/en-us/windows/win32/api/setupapi/ns-setupapi-sp_devinfo_data
+	"""
+
+	_fields_ = (
+		("cbSize", DWORD),
+		("ClassGuid", hwPortUtils.GUID),
+		("DevInst", DWORD),
+		("Reserved", PULONG),
+	)
+
+	def __str__(self):
+		return f"ClassGuid:{self.ClassGuid} DevInst:{self.DevInst}"
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
@@ -25,14 +45,14 @@ CM_Get_Parent.argtypes = [ctypes.POINTER(hwPortUtils.DWORD), hwPortUtils.DWORD, 
 CM_Get_Parent.restype = hwPortUtils.DWORD
 
 SetupDiOpenDeviceInfoW = ctypes.windll.setupapi.SetupDiOpenDeviceInfoW 
-SetupDiOpenDeviceInfoW.argtypes = [winBindings.setupapi.HDEVINFO,
+SetupDiOpenDeviceInfoW.argtypes = [HDEVINFO,
 	ctypes.wintypes.LPCWSTR,
-	winBindings.setupapi.HWND,
+	HWND,
 	hwPortUtils.DWORD,
-	ctypes.POINTER(winBindings.setupapi.SP_DEVINFO_DATA)]
+	ctypes.POINTER(SP_DEVINFO_DATA)]
 SetupDiOpenDeviceInfoW.restype = ctypes.c_bool
 
-def getParent(child_dev_inst: winBindings.setupapi.SP_DEVINFO_DATA, g_hdi: winBindings.setupapi.HDEVINFO) -> winBindings.setupapi.SP_DEVINFO_DATA:
+def getParent(child_dev_inst: SP_DEVINFO_DATA, g_hdi: HDEVINFO) -> SP_DEVINFO_DATA:
 	buf = ctypes.create_unicode_buffer(1024)
 
 	parent_dev_inst = hwPortUtils.DWORD()
@@ -44,15 +64,15 @@ def getParent(child_dev_inst: winBindings.setupapi.SP_DEVINFO_DATA, g_hdi: winBi
 	if ret != 0:
 		raise ctypes.WinError(ctypes.get_last_error())
 	
-	parent_devinfo_data = winBindings.setupapi.SP_DEVINFO_DATA()
-	parent_devinfo_data.cbSize = ctypes.sizeof(winBindings.setupapi.SP_DEVINFO_DATA)
+	parent_devinfo_data = SP_DEVINFO_DATA()
+	parent_devinfo_data.cbSize = ctypes.sizeof(SP_DEVINFO_DATA)
 	ret = SetupDiOpenDeviceInfoW(g_hdi, buf.value, None, 0, ctypes.byref(parent_devinfo_data))
 	if not ret:
 		raise ctypes.WinError(ctypes.get_last_error())
 	
 	return parent_devinfo_data
 
-def getName(dev_inst: winBindings.setupapi.SP_DEVINFO_DATA, g_hdi: winBindings.setupapi.HDEVINFO) -> str:
+def getName(dev_inst: SP_DEVINFO_DATA, g_hdi: HDEVINFO) -> str:
 	buf = ctypes.create_unicode_buffer(1024)
 	DEVPKEY_NAME = hwPortUtils.DEVPROPKEY(hwPortUtils.GUID("{b725f130-47ef-101a-a5f1-02608c9eebac}"), 10)
 	propRegDataType = hwPortUtils.DWORD()
