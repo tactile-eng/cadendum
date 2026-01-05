@@ -273,13 +273,6 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 				i += 1
 				child = child.next
 			return None
-		
-	def debugAT(self, obj, indent = 0):
-		log.info(f"{"  "*indent}{obj} | {obj.name} | {obj.role} | {self.getCellRowDirectly(obj)}-{self.getCellColDirectly(obj)}")
-		child = obj.firstChild
-		while child != None:
-			self.debugAT(child, indent + 1)
-			child = child.next
 
 	def getTableInfo(self):
 		timer = self.startTimer()
