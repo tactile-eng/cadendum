@@ -165,6 +165,8 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 			pass
 		if row_num != None:
 			return row_num - 1
+		if cell.role == controlTypes.ROLE_TABLEROW and cell.firstChild != None:
+			return self.getCellRowDirectly(cell.firstChild)
 		return None
 
 	def getCellColDirectly(self, cell):
@@ -199,11 +201,17 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		remainingCells = [cell for cell in cellsSorted]
 		output = []
 
+		found_first_row = False
+
 		while row_obj != None and len(remainingCells) > 0:
 			if self.isCorrectCell(row_obj, remainingCells[0].row, remainingCells[0].col):
 				output.append(row_obj)
 				remainingCells = remainingCells[1:]
 				continue
+
+			if not found_first_row and row_obj.role == controlTypes.ROLE_TABLEROW:
+				found_first_row = True
+				row_i = 0
 			
 			row_num = self.getCellRowDirectly(row_obj)
 			if row_num == None:
@@ -265,6 +273,13 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 				i += 1
 				child = child.next
 			return None
+		
+	def debugAT(self, obj, indent = 0):
+		log.info(f"{"  "*indent}{obj} | {obj.name} | {obj.role} | {self.getCellRowDirectly(obj)}-{self.getCellColDirectly(obj)}")
+		child = obj.firstChild
+		while child != None:
+			self.debugAT(child, indent + 1)
+			child = child.next
 
 	def getTableInfo(self):
 		timer = self.startTimer()
