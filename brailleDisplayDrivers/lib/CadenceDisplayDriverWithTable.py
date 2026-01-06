@@ -236,19 +236,22 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 						remainingCells = remainingCells[1:]
 						continue
 					elif col_num > remainingCells[0].col:
-						log.error(f"passed col {row_obj} {col_obj} {remainingCells[0].col} {col_num}")
-						return None
+						log.warn(f"passed col {row_obj} {col_obj} {remainingCells[0].col} {col_num}")
+						break
 					
 					col_i += 1
 					col_obj = col_obj.next
-			elif row_num > remainingCells[0].row:
-				log.error(f"passed row {row_obj} {remainingCells[0].row} {row_num}")
-				return None
+			
+			if len(remainingCells) > 0 and row_num >= remainingCells[0].row:
+				log.warn(f"passed row {row_obj} {remainingCells[0].row} {row_num}")
+				output.append(None)
+				remainingCells = remainingCells[1:]
+				continue
 			
 			row_i += 1
 			row_obj = row_obj.next
 
-		if len(remainingCells) == 0:
+		if len(remainingCells) == 0 and any([o for o in output if o != None]):
 			return output
 		else:
 			log.error("unable to find cells")
@@ -273,6 +276,13 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 				i += 1
 				child = child.next
 			return None
+		
+	# def debugAT(self, obj, indent = 0):
+	# 	log.info(f"{'  '*indent}{obj} | {obj.name} | {obj.role} | {self.getCellRowDirectly(obj)}-{self.getCellColDirectly(obj)}")
+	# 	child = obj.firstChild
+	# 	while child != None:
+	# 		self.debugAT(child, indent + 1)
+	# 		child = child.next
 
 	def getTableInfo(self):
 		timer = self.startTimer()
@@ -627,6 +637,8 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 				else:
 					cellPositionI = allCellPositionsInOrder.index(cell)
 					data = cellObjects[cellPositionI]
+					if data == None:
+						data = ""
 				rowUntranslated.append(data)
 			rowsColsUntranslated.append(rowUntranslated)
 		log.info(f"names: {[[(None if cell == None else (cell if type(cell) == str else cell.name)) for cell in row] for row in rowsColsUntranslated]}")
