@@ -656,9 +656,9 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		for rowI, rowTranslated in enumerate(rowsColsTranslated):
 			for colI, translated in enumerate(rowTranslated):
 				pos = rowsColsNumbers[rowI][colI]
-				if pos.row == 0 and pos.col != 0 and not self.endsWithBraille(translated, self.columnHeaderTextToStrip):
+				if pos.row == 0 and pos.col != 0 and len(translated) > 0 and not self.endsWithBraille(translated, self.columnHeaderTextToStrip):
 					hasColumnHeaderText = False
-				if pos.col == 0 and pos.row != 0 and not self.endsWithBraille(translated, self.rowHeaderTextToStrip):
+				if pos.col == 0 and pos.row != 0 and len(translated) > 0 and not self.endsWithBraille(translated, self.rowHeaderTextToStrip):
 					hasRowHeaderText = False
 		for rowI, rowTranslated in enumerate(rowsColsTranslated):
 			for colI, translated in enumerate(rowTranslated):
