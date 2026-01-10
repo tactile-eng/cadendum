@@ -795,6 +795,20 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 				log.warn("no tree interceptor")
 		except Exception as e:
 			log.warn(f"unable to set browse cursor: {e}")
+	
+	def findCellInDirection(self, table_obj, direction, row, col, max_row, max_col):
+		is_vertical = (direction == Direction.Up or direction == Direction.Down)
+		is_increasing = (direction == Direction.Right or direction == Direction.Down)
+		max_to_move = max_row if is_vertical else max_col
+		while ((row if is_vertical else col) < max_to_move if is_increasing else (row if is_vertical else col) > 0):
+			if is_vertical:
+				row += 1 if is_increasing else -1
+			else:
+				col += 1 if is_increasing else -1
+			new_cell = self.getCell(table_obj, row, col)
+			if new_cell != None:
+				return new_cell
+		return None
 
 	def actuallyMoveTable(self, direction, page, timer):
 		self.measureTime("queue", timer)
@@ -844,8 +858,18 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 
 		new_cell = self.getCell(table_obj, row, col)
 		if new_cell == None:
-			log.error("improperly sized table")
-			return
+			log.info(f"hit multi-spanning row/col {row} {col} {tableWidth} {tableHeight}")
+			max_row = tableHeight - 1 if tableHeight != None else row + 5
+			max_col = tableWidth - 1 if tableWidth != None else col + 5
+			# TODO: is there a way to tell if gap is caused by row-span or col-span?
+			new_cell = self.findCellInDirection(table_obj, direction, row, col, max_row, max_col)
+			if new_cell == None:
+				log.info("no cell in same direction")
+				perp_direction_up = Direction.Left if (direction == Direction.Up or direction == Direction.Down) else Direction.Up
+				new_cell = self.findCellInDirection(table_obj, perp_direction_up, row, col, max_row, max_col)
+				if new_cell == None:
+					log.error("no cell in either direction")
+					return
 
 		log.info(f"setting navigator object")
 
