@@ -50,7 +50,6 @@ rowButtonNumbers = {
 class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 	displayingTable: bool
 	tableTimer: RunInterval | None
-	lastDisplayedNonTable: list[int] | None
 	showCellPositionsDevice: bool
 	showFixedColumnHeader: bool
 	showFixedRowHeader: bool
@@ -66,7 +65,6 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 	def __init__(self, port):
 		self.displayingTable = False
 		self.tableTimer = None
-		self.lastDisplayedNonTable = None
 		self.showCellPositionsDevice = False
 		self.showFixedColumnHeader = True
 		self.showFixedRowHeader = True
@@ -113,7 +111,7 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 				self.tableTimer = RunInterval(self.toggleBlinkAndDisplayTable, 0.5)
 				self.tableTimer.start()
 		else:
-			self.restoreNonTable()
+			self.refreshScreen()
 			if self.tableTimer is not None:
 				self.tableTimer.cancel()
 				self.tableTimer = None
@@ -129,10 +127,14 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		super().doToggleImage()
 
 	def display(self, cells: list[int], isImage = False, isTable = False):
-		if not isTable:
-			self.lastDisplayedNonTable = cells
 		if isTable == self.displayingTable:
 			super().display(cells, isImage)
+		elif not isTable:
+			self.recordText(cells)
+
+	def recordScreen(self, cells: list[int]):
+		if not self.displayingTable:
+			super().recordScreen(cells)
 
 	def displayTable(self):
 		timer = self.startTimer()
@@ -141,11 +143,6 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 			lambda : self.actuallyDisplayTable(timer),
 			_immediate=True,
 		)
-
-	# restore text mode by drawing text
-	def restoreNonTable(self):
-		if self.lastDisplayedNonTable is not None:
-			self.display(self.lastDisplayedNonTable)
 
 	# cleanup on exit (called by NVDA)
 	def terminate(self):
@@ -976,13 +973,11 @@ class CadenceDisplayDriverWithTable(CadenceDisplayDriverWithImage):
 		else:
 			log.error("unable to get cell for actuallyNavigateToTableCell")
 
-	# run after changing device positions to update screens
-	def afterDevicePositionsChanged(self):
-		super().afterDevicePositionsChanged()
+	def refreshScreen(self):
 		if self.displayingTable:
 			self.displayTable()
 		else:
-			self.restoreNonTable()
+			super().refreshScreen()
 
 	# handle keys
 	def handleKeys(self, liveKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], composedKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], gesture: MiniKeyInputGesture | None):

@@ -473,6 +473,8 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 
 	devices: list[CadenceDeviceDriver]
 
+	lastDisplayedText: list[int] | None
+
 	@classmethod
 	def registerAutomaticDetection(cls, driverRegistrar: bdDetect.DriverRegistrar):
 		driverRegistrar.addUsbDevices(
@@ -494,6 +496,7 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 		self.composedKeys = []
 		self.devices = []
 		self.keyGestureHandled = False
+		self.lastDisplayedText = None
 
 		# check for USB devices
 		for devMatch in self._getTryPorts("usb"):
@@ -526,6 +529,7 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 
 	# display on device (called by NVDA or manually in some cases)
 	def display(self, cells: list[int]):
+		self.recordScreen(cells)
 		# log.info(f"display {len(cells)} {self.numRows} {self.numCols}")
 		if len(cells) < self.numRows * self.numCols:
 			cells = [(cells[i] if i < len(cells) else 0) for i in self.numRows * self.numCols]
@@ -543,6 +547,12 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 				image = joinImagesHorizontally(image, rightSideImage)
 			devCells = imageToCells(image)
 			device.display(devCells)
+	
+	def recordScreen(self, cells: list[int]):
+		self.recordText(cells)
+
+	def recordText(self, cells: list[int]):
+		self.lastDisplayedText = cells
 
 	# crop a screen to a device position
 	def getImage(self, fullImage: list[list[bool]], pos: DevPosition) -> list[list[bool]]:
@@ -669,6 +679,11 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 	# run after changing device positions to update screens
 	def afterDevicePositionsChanged(self):
 		self.updateScreenSize()
+		self.refreshScreen()
+	
+	def refreshScreen(self):
+		if self.lastDisplayedText != None:
+			self.display(self.lastDisplayedText)
 
 	# move current device position by flipping it
 	def flipScreen(self, deviceID: tuple[int, DevSide], flipped: bool):

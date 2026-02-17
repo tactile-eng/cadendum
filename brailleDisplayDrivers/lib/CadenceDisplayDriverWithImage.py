@@ -103,7 +103,6 @@ class RunInterval(threading.Thread):
 # Extends the driver to support image mode
 class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 	displayingImage: bool
-	lastDisplayedNonImage: list[int] | None
 	imageTimer: RunInterval | None
 
 	lastLeft: int
@@ -114,7 +113,6 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 	def __init__(self, port):
 		# initialize properties
 		self.displayingImage = False
-		self.lastDisplayedNonImage = None
 		self.imageTimer = None
 		self.lastLeft = -1
 		self.lastTop = -1
@@ -176,10 +174,14 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 		super().__init__(port)
 
 	def display(self, cells: list[int], isImage = False):
-		if not isImage:
-			self.lastDisplayedNonImage = cells
 		if isImage == self.displayingImage:
 			super().display(cells)
+		elif not isImage:
+			self.recordText(cells)
+
+	def recordScreen(self, cells: list[int]):
+		if not self.displayingImage:
+			super().recordScreen(cells)
 
 	# toggle between text and image mode
 	def doToggleImage(self):
@@ -190,7 +192,7 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 				self.imageTimer = RunInterval(self.actuallyDisplayImage, 0.5)
 				self.imageTimer.start()
 		else:
-			self.restoreNonImage()
+			self.refreshScreen()
 			if self.imageTimer is not None:
 				self.imageTimer.cancel()
 				self.imageTimer = None
@@ -244,11 +246,6 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 		boolImage = bitmapToImage(bitmapBuffer, screenWidth, screenHeight, self.bwThreshold.get(), self.bwReversed, self.colorMode)
 		cells = imageToCells(boolImage)
 		self.display(cells, True)
-
-	# restore text mode by drawing text
-	def restoreNonImage(self):
-		if self.lastDisplayedNonImage is not None:
-			self.display(self.lastDisplayedNonImage)
 
 	# cleanup on exit (called by NVDA)
 	def terminate(self):
@@ -388,13 +385,11 @@ class CadenceDisplayDriverWithImage(MainCadenceDisplayDriver):
 		self.followFocus = not self.followFocus
 		log.info(f"FOLLOW FOCUS {self.followFocus}")
 
-	# run after changing device positions to update screens
-	def afterDevicePositionsChanged(self):
-		super().afterDevicePositionsChanged()
+	def refreshScreen(self):
 		if self.displayingImage:
 			self.displayImage(True)
 		else:
-			self.restoreNonImage()
+			super().refreshScreen()
 
 	# handle keys
 	def handleKeys(self, liveKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], composedKeysWithPosition: list[tuple[MiniKey, tuple[int, DevSide]]], gesture: MiniKeyInputGesture | None):
