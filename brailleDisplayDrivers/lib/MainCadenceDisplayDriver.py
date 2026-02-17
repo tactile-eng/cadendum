@@ -575,23 +575,27 @@ class MainCadenceDisplayDriver(braille.BrailleDisplayDriver):
 	# receive button press from device (called by CadenceDeviceDriver)
 	def _hidOnReceive(self, data: bytes, devIndex: int):
 		log.info("# data: " + " ".join([f"{b:0>8b}" for b in data]))
-		if len(data) == 5 or len(data) == 7:
+		isSingle = len(data) == 5 or len(data) == 6
+		isDouble = len(data) == 7 or len(data) == 8
+		hasTouch = len(data) == 6 or len(data) == 8
+		if isSingle or isDouble:
 			keysDown = [key for key in self.prevKeysDown if key[1][0] != devIndex]
-			for byteI, byte in enumerate(data):
+			dataWithoutTouch = data[:-1] if hasTouch else data
+			device = self.devices[devIndex]
+			for byteI, byte in enumerate(dataWithoutTouch):
 				for bitI in range(8):
 					if byte & (1 << bitI):
 						index = byteI * 8 + bitI
 						log.info(f"## key {index}")
-						device = self.devices[devIndex]
 						devSides = device.getSides()
 						devSide = devSides[0]
-						if len(data) == 7 or (len(data) == 5 and devSide == DevSide.Right):
+						if isDouble or (isSingle and devSide == DevSide.Right):
 							if index in rightKeys:
 								index = rightKeys[index]
-								if len(data) == 7:
+								if isDouble:
 									devSide = devSides[1]
 						key = MiniKey(index)
-						if len(data) == 5 and devSide == DevSide.Right:
+						if isSingle and devSide == DevSide.Right:
 							if key in mirroredKeys:
 								key = mirroredKeys[key]
 						key = self.rotateKey(key, self.getDevPosition((devIndex, devSide)))
