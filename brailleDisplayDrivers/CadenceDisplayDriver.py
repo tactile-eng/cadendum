@@ -1,10 +1,9 @@
 import bdDetect
-from brailleDisplayDrivers.lib.CadenceDisplayDriverWithImage import CadenceDisplayDriverWithImage, TestCadenceDisplayDriver
-from brailleDisplayDrivers.lib.MainCadenceDisplayDriver import MainCadenceDisplayDriver
+from brailleDisplayDrivers.lib.CadenceDisplayDriverWithTable import CadenceDisplayDriverWithTable
 
 # is driver enabled?
 def isSupportEnabled() -> bool:
-	return bdDetect.driverIsEnabledForAutoDetection(CadenceDisplayDriverWithImage.name)
+	return bdDetect.driverIsEnabledForAutoDetection(CadenceDisplayDriverWithTable.name)
 
 # export CadenceDisplayDriver
-BrailleDisplayDriver = CadenceDisplayDriverWithImage
+BrailleDisplayDriver = CadenceDisplayDriverWithTable
